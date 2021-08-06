@@ -71,6 +71,7 @@ import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.mojom.WindowOpenDisposition;
 import org.chromium.url.GURL;
+import org.chromium.chrome.browser.omnibox.UrlBarData;
 
 import java.util.List;
 import java.util.Optional;

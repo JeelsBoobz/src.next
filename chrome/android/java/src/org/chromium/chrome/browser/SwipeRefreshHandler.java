@@ -337,6 +337,8 @@ public class SwipeRefreshHandler extends TabWebContentsUserData
         if (mSwipeType == OverscrollAction.PULL_TO_REFRESH) {
             mSwipeRefreshLayout.release(allowRefresh);
         } else if (mSwipeType == OverscrollAction.HISTORY_NAVIGATION) {
+            if (!ContextUtils.getAppSharedPreferences().getBoolean("side_swipe_mode_enabled", true))
+                return;
             if (mNavigationCoordinator != null) mNavigationCoordinator.release(allowRefresh);
         }
         TraceEvent.end("SwipeRefreshHandler.release");

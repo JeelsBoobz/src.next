@@ -39,6 +39,10 @@ import org.chromium.ui.modelutil.PropertyModel;
 import java.util.Arrays;
 import java.util.Optional;
 
+import org.chromium.chrome.browser.omnibox.UrlBarData;
+
+import org.chromium.base.ContextUtils;
+
 /**
  * This class controls the interaction of the "edit url" suggestion item with the rest of the
  * suggestions list. This class also serves as a mediator, containing logic that interacts with the

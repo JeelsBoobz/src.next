@@ -148,6 +148,7 @@ class ExtensionInstallPrompt {
     void AppendRatingStars(StarAppender appender, void* data) const;
     std::u16string GetRatingCount() const;
     std::u16string GetUserCount() const;
+    std::u16string GetPermissionsAsString() const;
     size_t GetPermissionCount() const;
     std::u16string GetPermission(size_t index) const;
     std::u16string GetPermissionsDetails(size_t index) const;
@@ -366,6 +367,8 @@ class ExtensionInstallPrompt {
 
   // The object responsible for doing the UI specific actions.
   std::unique_ptr<ExtensionInstallUI> install_ui_;
+
+  content::WebContents* contents_;
 
   // Parameters to show the confirmation UI.
   std::unique_ptr<ExtensionInstallPromptShowParams> show_params_;

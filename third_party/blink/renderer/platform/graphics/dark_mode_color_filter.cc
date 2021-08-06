@@ -55,11 +55,14 @@ class ColorFilterWrapper : public DarkModeColorFilter {
 };
 
 class LABColorFilter : public DarkModeColorFilter {
+ private:
+   DarkModeSettings settings_;
+
  public:
-  LABColorFilter() : transformer_(lab::DarkModeSRGBLABTransformer()) {
+  LABColorFilter(const DarkModeSettings& settings) : transformer_(lab::DarkModeSRGBLABTransformer()) {
     SkHighContrastConfig config;
     config.fInvertStyle = SkHighContrastConfig::InvertStyle::kInvertLightness;
-    config.fGrayscale = false;
+    config.fGrayscale = settings.grayscale;
     config.fContrast = 0.0;
     filter_ = cc::ColorFilter::MakeHighContrast(config);
   }
@@ -67,7 +70,16 @@ class LABColorFilter : public DarkModeColorFilter {
   SkColor4f InvertColor(const SkColor4f& color) const override {
     SkV3 rgb = {color.fR, color.fG, color.fB};
     SkV3 lab = transformer_.SRGBToLAB(rgb);
-    lab.x = std::min(110.0f - lab.x, 100.0f);
+
+//  input contrast is -0.15 to +0.15
+//  110 = gray
+//  100 = black
+    float contrast = settings_.contrast;
+    if (contrast < 0)
+      contrast = contrast * -1;
+    float threshold = 100;
+    threshold = 100 + (settings_.contrast * 100);
+    lab.x = std::min(threshold - lab.x, 100.0f);
     rgb = transformer_.LABToSRGB(lab);
 
     SkColor4f inverted_color{rgb.x, rgb.y, rgb.z, color.fA};
@@ -180,7 +192,7 @@ std::unique_ptr<DarkModeColorFilter> DarkModeColorFilter::FromSettings(
           SkHighContrastConfig::InvertStyle::kInvertLightness, settings);
 
     case DarkModeInversionAlgorithm::kInvertLightnessLAB:
-      return std::make_unique<LABColorFilter>();
+      return std::make_unique<LABColorFilter>(settings);
   }
   NOTREACHED();
 }

@@ -431,7 +431,10 @@ void ExtensionContextMenuModel::ExecuteCommand(int command_id,
     }
     case OPTIONS:
       DCHECK(OptionsPageInfo::HasOptionsPage(extension));
+#if 0
       ExtensionTabUtil::OpenOptionsPage(extension, browser_);
+#endif
+      ExtensionTabUtil::OpenOptionsPage(extension, GetActiveWebContents());
       break;
     case TOGGLE_VISIBILITY: {
       bool visible = !is_pinned_;
