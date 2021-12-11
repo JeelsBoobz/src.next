@@ -27,6 +27,8 @@
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/color_utils.h"
 
+#include "third_party/skia/include/effects/SkColorMatrix.h"
+
 namespace blink {
 
 namespace {
