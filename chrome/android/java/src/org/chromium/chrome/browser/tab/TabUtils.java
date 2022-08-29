@@ -70,6 +70,21 @@ public class TabUtils {
         int OTHER = 400;
     }
 
+    /**
+     * Define the callers of NavigationControllerImpl#setUseDesktopUserAgent.
+     */
+    @IntDef({UseDesktopUserAgentCaller.ON_MENU_OR_KEYBOARD_ACTION,
+            UseDesktopUserAgentCaller.LOAD_IF_NEEDED, UseDesktopUserAgentCaller.RELOAD,
+            UseDesktopUserAgentCaller.RELOAD_IGNORING_CACHE, UseDesktopUserAgentCaller.OTHER})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface UseDesktopUserAgentCaller {
+        int ON_MENU_OR_KEYBOARD_ACTION = 0;
+        int LOAD_IF_NEEDED = 1;
+        int RELOAD = 2;
+        int RELOAD_IGNORING_CACHE = 3;
+        int OTHER = 4;
+    }
+
     // Do not instantiate this class.
     private TabUtils() {}
 

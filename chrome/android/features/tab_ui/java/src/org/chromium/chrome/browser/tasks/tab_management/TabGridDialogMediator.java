@@ -155,6 +155,11 @@ public class TabGridDialogMediator
         void postHiding();
 
         /**
+         * Prepare the TabGridDialog before show.
+         */
+        void prepareDialog();
+
+        /**
          * @return Whether or not the TabGridDialog consumed the event.
          */
         boolean handleBackPressed();

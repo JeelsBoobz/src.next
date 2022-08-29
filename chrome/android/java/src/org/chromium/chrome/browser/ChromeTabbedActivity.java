@@ -62,7 +62,6 @@ import org.chromium.base.supplier.LazyOneshotSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneShotCallback;
-import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.supplier.SupplierUtils;
@@ -121,6 +120,7 @@ import org.chromium.chrome.browser.educational_tip.EducationTipModuleActionDeleg
 import org.chromium.chrome.browser.educational_tip.EducationalTipModuleBuilder;
 import org.chromium.chrome.browser.educational_tip.EducationalTipModuleUtils;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+import org.chromium.chrome.browser.feature_guide.notifications.FeatureNotificationUtils;
 import org.chromium.chrome.browser.feed.FeedSurfaceTracker;
 import org.chromium.chrome.browser.feed.FeedUma;
 import org.chromium.chrome.browser.feedback.OmniboxFeedbackSource;
@@ -1221,6 +1221,35 @@ public class ChromeTabbedActivity extends ChromeActivity {
         }
     }
 
+    private ViewGroup createAndSetStartSurfaceForTablet() {
+        assert isTablet();
+        final long startTimeMs = SystemClock.uptimeMillis();
+        CompositorViewHolder compositorViewHolder = getCompositorViewHolderSupplier().get();
+        ViewGroup containerView = compositorViewHolder;
+        if (TabUiFeatureUtilities.isTabletGridTabSwitcherPolishEnabled(this)) {
+            // Inflate view holder for polish GTS.
+            containerView =
+                    (ViewGroup) ((ViewStub) findViewById(R.id.grid_tab_switcher_view_holder_stub))
+                            .inflate();
+            // Set view in toolbar manager to set toolbar stub.
+            getToolbarManager().setTabSwitcherFullScreenView(containerView);
+        }
+
+        // create start surface.
+        createTabSwitcherOrStartSurface(compositorViewHolder, containerView);
+        if (ReturnToChromeUtil.isTabSwitcherOnlyRefactorEnabled(this)
+                && mTabSwitcherSupplier.hasValue()) {
+            mTabSwitcherSupplier.get().getController().enableRecordingFirstMeaningfulPaint(
+                    getOnCreateTimestampMs());
+        } else if (mStartSurfaceSupplier.hasValue()) {
+            mStartSurfaceSupplier.get().enableRecordingFirstMeaningfulPaint(
+                    getOnCreateTimestampMs());
+        }
+        RecordHistogram.recordTimesHistogram(
+                TAB_SWITCHER_CREATION_TIME, SystemClock.uptimeMillis() - startTimeMs);
+        return containerView;
+    }
+
     private void maybeCreateIncognitoTabSnapshotController() {
         try (TraceEvent e =
                 TraceEvent.scoped(
@@ -1470,6 +1499,8 @@ public class ChromeTabbedActivity extends ChromeActivity {
         } else {
             mInactivityTracker.setLastVisibleTimeMsAndRecord(System.currentTimeMillis());
         }
+
+        FeatureNotificationUtils.handleIntentIfApplicable(getIntent());
     }
 
     @Override
@@ -1911,6 +1942,10 @@ public class ChromeTabbedActivity extends ChromeActivity {
             super.initializeState();
             Log.i(TAG, "#initializeState");
             Intent intent = getIntent();
+            // Don't remove this line as this is used to unblock the app draw. Setting this
+            // supplier is very important.
+            mSavedInstanceStateSupplier.set(
+                    getSavedInstanceState() != null ? getSavedInstanceState() : new Bundle());
 
             boolean hadCipherData =
                     CipherLazyHolder.sCipherInstance.restoreFromBundle(getSavedInstanceState());
@@ -4206,6 +4241,37 @@ public class ChromeTabbedActivity extends ChromeActivity {
     public void onStart() {
         try (TraceEvent e = TraceEvent.scoped("ChromeTabbedActivity.onStart")) {
             super.onStart();
+        }
+    }
+
+    private void returnToOverviewModeOnBackPressed() {
+        Tab currentTab = getActivityTab();
+        assert currentTab != null;
+
+        // If current tab is an incognito one, we need to change tab model to non-incognito for
+        // showing non-incognito start surface homepage.
+        if (currentTab.isIncognito()) mTabModelSelector.selectModel(/*incognito=*/false);
+
+        if (StartSurfaceUserData.getKeepTab(currentTab)
+                || StartSurfaceUserData.isOpenedFromStart(currentTab)) {
+            // If the current tab is created from the start surface with the keepTab property,
+            // shows the Start surface non-incognito homepage to prevent a loop between the
+            // current tab and previous overview mode. Once in the Start surface, it will close
+            // Chrome if back button is tapped again.
+            showOverview(StartSurfaceState.SHOWING_HOMEPAGE);
+            ReturnToChromeUtil.recordBackNavigationToStart("FromTab");
+        } else {
+            // Otherwise, clicking the back button should go back to the previous overview mode.
+            showOverview(StartSurfaceState.SHOWING_PREVIOUS);
+        }
+
+        if (currentTab.isClosing()) return;
+        // If current tab is incognito, or it shouldn't be kept and it's not from restore, close
+        // the tab.
+        if (currentTab.isIncognito()
+                || (!StartSurfaceUserData.getKeepTab(currentTab)
+                        && currentTab.getLaunchType() != TabLaunchType.FROM_RESTORE)) {
+            closeTabAfterStartSurfaceLayoutIsShown(currentTab);
         }
     }
 

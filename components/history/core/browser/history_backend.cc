@@ -433,6 +433,15 @@ void HistoryBackend::Init(
     StartDeletingForeignVisits();
   }
 
+  if (base::FeatureList::IsEnabled(syncer::kSyncEnableHistoryDataType)) {
+    // TODO(crbug.com/1318028): Plumb in syncer::ReportUnrecoverableError as the
+    // dump_stack callback.
+    history_sync_bridge_ = std::make_unique<HistorySyncBridge>(
+        this, db_ ? db_->GetHistoryMetadataDB() : nullptr,
+        std::make_unique<ClientTagBasedModelTypeProcessor>(
+            syncer::HISTORY, /*dump_stack=*/base::RepeatingClosure()));
+  }
+
   memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
       FROM_HERE, base::BindRepeating(&HistoryBackend::OnMemoryPressure,
                                      base::Unretained(this)));
@@ -773,6 +782,11 @@ void HistoryBackend::AddContentModelAnnotationsForVisit(
       annotations.model_annotations = model_annotations;
       db_->AddContentAnnotationsForVisit(visit_id, annotations);
     }
+    URLRow url_row;
+    if (db_->GetURLRow(visit_row.url_id, &url_row)) {
+      delegate_->NotifyContentModelAnnotationModified(url_row,
+                                                      model_annotations);
+    }
     ScheduleCommit();
   }
 }
@@ -1041,6 +1055,9 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
       AssignSegmentForNewVisit(request.url, from_visit_id, last_visit_id, t,
                                request.time);
     }
+
+    // Update the referrer's duration.
+    UpdateVisitDuration(from_visit_id, request.time);
   } else {
     // Redirect case. Add the redirect chain.
 
@@ -2010,6 +2027,12 @@ void HistoryBackend::SetSyncTransportState(
   if (history_sync_bridge_) {
     history_sync_bridge_->SetSyncTransportState(state);
   }
+}
+
+base::WeakPtr<syncer::ModelTypeControllerDelegate>
+HistoryBackend::GetHistorySyncControllerDelegate() {
+  DCHECK(history_sync_bridge_);
+  return history_sync_bridge_->change_processor()->GetControllerDelegate();
 }
 
 // Statistics ------------------------------------------------------------------
@@ -3530,6 +3553,7 @@ void HistoryBackend::DatabaseErrorCallback(int error, sql::Statement* stmt) {
 
   // Raze the database for catastrophic errors.
   if (!scheduled_kill_db_ && sql::IsErrorCatastrophic(error)) {
+    sql::UmaHistogramSqliteResult("History.DatabaseSqliteError", error);
     scheduled_kill_db_ = true;
 
     // Don't just do the close/delete here, as we are being called by `db` and
