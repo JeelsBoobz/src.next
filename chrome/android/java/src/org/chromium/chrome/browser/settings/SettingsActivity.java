@@ -403,6 +403,9 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        super.onCreateOptionsMenu(menu);
+        if (true)
+            return true;
         // By default, every screen in Settings shows a "Help & feedback" menu item.
         MenuItem help =
                 menu.add(

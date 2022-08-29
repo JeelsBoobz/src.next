@@ -82,6 +82,7 @@ bool TabMatcherDesktop::IsTabOpenWithURL(const GURL& url,
       return true;
     }
   }
+#endif
   return false;
 }
 
@@ -120,6 +121,7 @@ std::vector<content::WebContents*> TabMatcherDesktop::GetOpenWebContents(
   }
   return all_tabs;
 }
+#endif
 
 bool TabMatcherDesktop::IsStrippedURLEqualToWebContentsURL(
     const GURL& stripped_url,

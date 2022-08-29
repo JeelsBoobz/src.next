@@ -180,6 +180,8 @@ public class TabUtils {
                 tabUserAgent = TabUserAgent.DESKTOP;
             } else {
                 tabUserAgent = TabUserAgent.DEFAULT;
+                if (ContextUtils.getAppSharedPreferences().getBoolean("desktop_mode", false))
+                     tabUserAgent = TabUserAgent.DESKTOP;
             }
             tab.setUserAgent(tabUserAgent);
         }

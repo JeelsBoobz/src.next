@@ -206,7 +206,7 @@ class BrowserProcess {
   virtual printing::BackgroundPrintingManager*
       background_printing_manager() = 0;
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
   virtual IntranetRedirectDetector* intranet_redirect_detector() = 0;
 #endif
 

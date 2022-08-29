@@ -469,7 +469,9 @@ void ExtensionService::PerformActionBasedOnOmahaAttributes(
                                                                 attributes);
   allowlist_->PerformActionBasedOnOmahaAttributes(extension_id, attributes);
   // Show an error for the newly blocklisted extension.
+#if 0
   error_controller_->ShowErrorIfNeeded();
+#endif
 }
 
 void ExtensionService::PerformActionBasedOnExtensionTelemetryServiceVerdicts(
@@ -732,7 +734,9 @@ void ExtensionService::SetReadyAndNotifyListeners() {
 }
 
 void ExtensionService::OnExtensionManagementSettingsChanged() {
+#if 0
   error_controller_->ShowErrorIfNeeded();
+#endif
 
   // Revokes blocked permissions from active_permissions for all extensions.
   ExtensionManagement* settings =
@@ -883,7 +887,10 @@ void ExtensionService::ManageBlocklist(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   safe_browsing_verdict_handler_.ManageBlocklist(state_map);
+
+#if 0
   error_controller_->ShowErrorIfNeeded();
+#endif
 }
 
 bool ExtensionService::UserCanDisableInstalledExtension(

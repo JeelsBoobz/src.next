@@ -184,7 +184,6 @@
 #include "chrome/browser/webapps/webapps_client_android.h"
 #include "chrome/browser/webauthn/android/chrome_webauthn_client_android.h"
 #include "components/webauthn/android/webauthn_client_android.h"
-#else
 #include "chrome/browser/devtools/devtools_auto_opener.h"
 #include "chrome/browser/error_reporting/chrome_js_error_report_processor.h"
 #include "chrome/browser/gcm/gcm_product_util.h"
@@ -404,7 +403,7 @@ void BrowserProcessImpl::Init() {
   web_app::ChromeIwaClient::CreateSingleton();
 #endif
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
   KeepAliveRegistry::GetInstance()->SetIsShuttingDown(false);
   KeepAliveRegistry::GetInstance()->AddObserver(this);
 #endif  // !BUILDFLAG(IS_ANDROID)
@@ -486,7 +485,7 @@ BrowserProcessImpl::~BrowserProcessImpl() {
   extensions::AppWindowClient::Set(nullptr);
 #endif
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
   KeepAliveRegistry::GetInstance()->RemoveObserver(this);
 #endif
 
@@ -1018,7 +1017,7 @@ printing::BackgroundPrintingManager*
 #endif
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
 IntranetRedirectDetector* BrowserProcessImpl::intranet_redirect_detector() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!intranet_redirect_detector_)
@@ -1167,7 +1166,7 @@ void BrowserProcessImpl::RegisterPrefs(PrefRegistrySimple* registry) {
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   registry->RegisterBooleanPref(metrics::prefs::kMetricsReportingEnabled,
-                                GoogleUpdateSettings::GetCollectStatsConsent());
+                                false);
   registry->RegisterBooleanPref(prefs::kDevToolsRemoteDebuggingAllowed, true);
 
 #if BUILDFLAG(IS_LINUX)
@@ -1543,7 +1542,7 @@ void BrowserProcessImpl::CreateSafeBrowsingService() {
   // Set this flag to true so that we don't retry indefinitely to
   // create the service class if there was an error.
   created_safe_browsing_service_ = true;
-
+#if 0
   // The factory can be overridden in tests.
   if (!safe_browsing::SafeBrowsingServiceInterface::HasFactory()) {
     safe_browsing::SafeBrowsingServiceInterface::RegisterFactory(
@@ -1556,6 +1555,7 @@ void BrowserProcessImpl::CreateSafeBrowsingService() {
       safe_browsing::SafeBrowsingServiceInterface::CreateSafeBrowsingService());
   if (safe_browsing_service_)
     safe_browsing_service_->Initialize();
+#endif
 }
 #endif
 
@@ -1680,7 +1680,7 @@ void BrowserProcessImpl::Unpin() {
   DCHECK(!shutting_down_);
   shutting_down_ = true;
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
   KeepAliveRegistry::GetInstance()->SetIsShuttingDown();
 #endif  // !BUILDFLAG(IS_ANDROID)
 

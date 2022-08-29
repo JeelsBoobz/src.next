@@ -16,6 +16,9 @@ import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.url.GURL;
 
+import java.nio.ByteBuffer;
+import org.chromium.base.ContextUtils;
+
 /**
  * Creates Tabs. If the TabCreator creates Tabs asynchronously, null pointers will be returned
  * everywhere instead of a Tab.

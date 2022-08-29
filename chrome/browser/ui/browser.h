@@ -26,6 +26,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/tab_contents/web_contents_collection.h"
 #include "chrome/browser/themes/theme_service_observer.h"
+#include "components/strings/grit/components_strings.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar_controller.h"
 #include "chrome/browser/ui/bookmarks/bookmark_tab_helper_observer.h"
@@ -55,8 +56,10 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
+#if 0
 #if BUILDFLAG(IS_ANDROID)
 #error This file should only be included on desktop.
+#endif
 #endif
 
 #if BUILDFLAG(IS_OZONE)

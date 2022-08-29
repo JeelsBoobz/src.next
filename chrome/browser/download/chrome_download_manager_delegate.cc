@@ -588,7 +588,8 @@ void ChromeDownloadManagerDelegate::ShowDownloadDialog(
     int64_t total_bytes,
     DownloadLocationDialogType dialog_type,
     const base::FilePath& suggested_path,
-    DownloadDialogBridge::DialogCallback callback) {
+    DownloadDialogBridge::DialogCallback callback,
+    download::DownloadItem* download) {
   DCHECK(download_dialog_bridge_);
   auto connection_type = net::NetworkChangeNotifier::GetConnectionType();
 
@@ -1458,7 +1459,7 @@ void ChromeDownloadManagerDelegate::RequestConfirmation(
     gfx::NativeWindow native_window = web_contents->GetTopLevelNativeWindow();
     ShowDownloadDialog(
         native_window, download->GetTotalBytes(), dialog_type, suggested_path,
-        base::BindOnce(&OnDownloadDialogClosed, std::move(callback)));
+        base::BindOnce(&OnDownloadDialogClosed, std::move(callback)), download);
     return;
 
 #else   // BUILDFLAG(IS_ANDROID)

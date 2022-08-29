@@ -36,7 +36,7 @@
 #include "services/network/public/cpp/network_quality_tracker.h"
 #include "services/network/public/mojom/network_service.mojom-forward.h"
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
 #include "chrome/browser/upgrade_detector/build_state.h"
 #endif
 
@@ -184,7 +184,7 @@ class BrowserProcessImpl : public BrowserProcess,
   printing::PrintPreviewDialogController* print_preview_dialog_controller()
       override;
   printing::BackgroundPrintingManager* background_printing_manager() override;
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
   IntranetRedirectDetector* intranet_redirect_detector() override;
 #endif
   const std::string& GetApplicationLocale() override;
@@ -358,7 +358,7 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<NotificationUIManager> notification_ui_manager_;
 #endif
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
   std::unique_ptr<IntranetRedirectDetector> intranet_redirect_detector_;
 #endif
 

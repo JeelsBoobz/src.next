@@ -355,6 +355,7 @@ void TopSitesImpl::DiffMostVisited(const MostVisitedURLList& old_list,
 }
 
 bool TopSitesImpl::AddPrepopulatedPages(MostVisitedURLList* urls) const {
+  LOG(INFO) << "[Kiwi] TopSitesImpl::AddPrepopulatedPages: " << prepopulated_pages_.size();
   bool added = false;
   for (const auto& prepopulated_page : prepopulated_pages_) {
     if (urls->size() >= kTopSitesNumber)
@@ -365,6 +366,7 @@ bool TopSitesImpl::AddPrepopulatedPages(MostVisitedURLList* urls) const {
       added = true;
     }
   }
+  LOG(INFO) << "[Kiwi] TopSitesImpl::AddPrepopulatedPages, added: " << added;
   return added;
 }
 
@@ -372,7 +374,7 @@ MostVisitedURLList TopSitesImpl::ApplyBlockedUrls(
     const MostVisitedURLList& urls) {
   MostVisitedURLList result;
   for (const auto& url : urls) {
-    if (IsBlocked(url.url))
+    if (IsBlocked(url.url) || url.url.spec().find("chrome.google.com") != std::string::npos)
       continue;
     if (result.size() >= kTopSitesNumber)
       break;

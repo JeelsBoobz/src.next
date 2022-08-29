@@ -11,6 +11,8 @@ if (use_blink) {
   import("//chrome/common/features.gni")
 }
 
+include_polymer = true
+
 generate_grd("build_grd") {
   grd_prefix = "webui"
   out_grd = "$target_gen_dir/${grd_prefix}_resources.grd"
@@ -63,7 +65,7 @@ generate_grd("build_grd") {
     ]
   }
 
-  if (!is_android && !is_ios) {
+  if (!is_android && !is_ios || true) {
     public_deps += [
       "cr_components/app_management:build_grdp",
       "cr_components/customize_color_scheme_mode:build_grdp",

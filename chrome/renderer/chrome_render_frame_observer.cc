@@ -324,7 +324,7 @@ void ChromeRenderFrameObserver::DidCommitProvisionalLoad(
 }
 
 void ChromeRenderFrameObserver::DidClearWindowObject() {
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
   if (command_line.HasSwitch(switches::kInstantProcess))
@@ -366,7 +366,7 @@ void ChromeRenderFrameObserver::SetWindowFeatures(
 
 void ChromeRenderFrameObserver::ExecuteWebUIJavaScript(
     const std::u16string& javascript) {
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || true
   webui_javascript_.push_back(javascript);
 #endif
 }

@@ -111,6 +111,12 @@ import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.chrome.browser.AppMenuBridge;
 import org.chromium.base.Log;
 
+import android.graphics.Color;
+import android.text.SpannableString;
+import android.text.style.RelativeSizeSpan;
+import android.text.style.ForegroundColorSpan;
+import org.chromium.components.browser_ui.site_settings.ContentSettingsResources;
+
 /**
  * Base implementation of {@link AppMenuPropertiesDelegate} that handles hiding and showing menu
  * items based on activity state.
@@ -328,7 +334,11 @@ public abstract class AppMenuPropertiesDelegateImpl implements AppMenuProperties
 
         if (canShowExtensions) {
           int itemIndex = numItems++;
-          String extensions = AppMenuBridge.getRunningExtensions(Profile.fromWebContents(webContents).getOriginalProfile(), webContents);
+          String extensions = "";
+          if (isIncognito)
+            extensions = AppMenuBridge.getRunningExtensions(Profile.fromWebContents(webContents).getPrimaryOTRProfile(true), webContents);
+          else
+            extensions = AppMenuBridge.getRunningExtensions(Profile.fromWebContents(webContents).getOriginalProfile(), webContents);
           if (!extensions.isEmpty()) {
             String[] extensionsArray = extensions.split("\u001f");
             for (String extension: extensionsArray) {
@@ -348,6 +358,17 @@ public abstract class AppMenuPropertiesDelegateImpl implements AppMenuProperties
                 Bitmap decodedByte = BitmapFactory.decodeByteArray(decodedString, 0, decodedString.length);
 
                 newlyAdded.setIcon(new BitmapDrawable(mContext.getResources(), decodedByte));
+
+                boolean isIncognitoEnabled = false;
+                if (extensionsInfo[4].equals("active"))
+                  isIncognitoEnabled = true;
+                if (!isIncognitoEnabled && isIncognito) {
+                  SpannableString spanString = new SpannableString(newlyAdded.getTitle().toString());
+                  spanString.setSpan(new ForegroundColorSpan(Color.GRAY), 0, spanString.length(), 0);
+                  newlyAdded.setTitle(spanString);
+                  newlyAdded.setTitleCondensed("Extension (inactive): " + extensionsInfo[1] + ": " + extensionsInfo[2]);
+                  newlyAdded.setIcon(ContentSettingsResources.getBlockedSquareIcon(mContext.getResources(), newlyAdded.getIcon()));
+                }
               }
               itemIndex++;
            }
@@ -546,6 +567,7 @@ public abstract class AppMenuPropertiesDelegateImpl implements AppMenuProperties
         MenuItem adblockMenuLabel = menu.findItem(R.id.adblock_id);
         MenuItem adblockMenuCheck = menu.findItem(R.id.adblock_check_id);
 
+        if (currentTab == null || currentTab.getUrl() == null) { if (adblockMenuRow != null) adblockMenuRow.setVisible(false); return ; }
         String url = currentTab.getUrl().getSpec();
         boolean isChromeScheme = url.startsWith(UrlConstants.CHROME_URL_PREFIX)
                 || url.startsWith(UrlConstants.CHROME_NATIVE_URL_PREFIX);
@@ -555,7 +577,8 @@ public abstract class AppMenuPropertiesDelegateImpl implements AppMenuProperties
         // adsEnabled means "adBlockingEnabled"
         boolean itemVisible = canShowAdblockMenu
                 && !isChromeScheme && !currentTab.isNativePage() && !isDistilledPage;
-        adblockMenuRow.setVisible(itemVisible);
+        if (adblockMenuRow != null)
+            adblockMenuRow.setVisible(itemVisible);
         if (!itemVisible) return;
 
         boolean adBlockIsActive = (WebsitePreferenceBridgeJni.get().isContentSettingEnabled(Profile.getLastUsedRegularProfile(), ContentSettingsType.ADS) == false);

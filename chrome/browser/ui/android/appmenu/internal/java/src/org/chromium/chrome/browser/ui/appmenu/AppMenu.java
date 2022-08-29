@@ -236,6 +236,8 @@ class AppMenu implements OnKeyListener {
                                     : R.style.EndIconMenuAnimBottom));
         }
 
+        if (ContextUtils.getAppSharedPreferences().getBoolean("enable_bottom_toolbar", false)) mPopup.setAnimationStyle(R.style.EndIconMenuAnimBottom);
+
         // Turn off window animations for low end devices.
         if (SysUtils.isLowEndDevice()) mPopup.setAnimationStyle(0);
 
@@ -330,16 +332,13 @@ class AppMenu implements OnKeyListener {
                         anchorView.getRootView().getLayoutDirection());
         mPopup.setContentView(contentView);
 
-        if (popupHeight + popupPosition[1] > visibleDisplayFrame.bottom) {
-            mPopup.setHeight(visibleDisplayFrame.height());
-        }
-
         try {
             mPopup.showAtLocation(
                     anchorView.getRootView(),
                     Gravity.NO_GRAVITY,
                     popupPosition[0],
                     popupPosition[1]);
+        }
         } catch (WindowManager.BadTokenException e) {
             // Intentionally ignore BadTokenException. This can happen in a real edge case where
             // parent.getWindowToken is not valid. See http://crbug.com/826052 &
@@ -557,8 +556,12 @@ class AppMenu implements OnKeyListener {
 
         int menuHeight = calculateHeightForItems(heightList, canBeLastList, availableScreenSpace);
         menuHeight += footerHeight + headerHeight + padding.top + padding.bottom;
-        if (ContextUtils.getAppSharedPreferences().getBoolean("enable_bottom_toolbar", false) && menuItemIds.size() >= 7)
-            menuHeight /= 1.45;
+        if (ContextUtils.getAppSharedPreferences().getBoolean("enable_bottom_toolbar", false) && menuItemIds.size() >= 7) {
+            if (Build.VERSION.SDK_INT < 25)
+              menuHeight /= 1.55;
+            else
+              menuHeight /= 1.45;
+        }
         mPopup.setHeight(menuHeight);
     }
 

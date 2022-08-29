@@ -33,6 +33,8 @@ import android.view.View;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
 import android.view.ViewStub;
+import android.view.ViewTreeObserver;
+import android.widget.LinearLayout;
 import android.widget.FrameLayout;
 
 import androidx.annotation.ColorInt;
@@ -584,6 +586,40 @@ public class ToolbarPhone extends ToolbarLayout
 +        "d.getElementsByTagName('body')[0].style.height='';"
 +        "_kbOverscroll = false;}}(document));";
         currentTab.getWebContents().evaluateJavaScript(SCRIPT, null);
+        // matching chrome-native://newtab and chrome://newtab and kiwi://newtab
+        if (currentTab.isNativePage() && currentTab.getUrl().getSpec().contains("/newtab")) {
+            View nativeView = currentTab.getView();
+            DisplayAndroid display =
+                    DisplayAndroid.getNonMultiDisplay(ContextUtils.getApplicationContext());
+            int screenHeight = display.getDisplayHeight();
+            int targetHeight = (int)Math.round(screenHeight * 0.42);
+            final View handSpacer = nativeView.findViewWithTag("hand_button_spacer");
+            if (handSpacer != null && handSpacer.getHeight() > 0) {
+                ValueAnimator animator = ValueAnimator.ofInt(handSpacer.getHeight(), 0);
+                animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                    @Override
+                    public void onAnimationUpdate(ValueAnimator valueAnimator) {
+                        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) handSpacer.getLayoutParams();
+                        params.height = ((Integer) valueAnimator.getAnimatedValue());
+                        handSpacer.setLayoutParams(params);
+                    }
+                });
+                animator.setDuration(500);
+                animator.start();
+            } else if (handSpacer != null) {
+                ValueAnimator animator = ValueAnimator.ofInt(handSpacer.getHeight(), targetHeight);
+                animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                    @Override
+                    public void onAnimationUpdate(ValueAnimator valueAnimator) {
+                        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) handSpacer.getLayoutParams();
+                        params.height = ((Integer) valueAnimator.getAnimatedValue());
+                        handSpacer.setLayoutParams(params);
+                    }
+                });
+                animator.setDuration(500);
+                animator.start();
+            }
+        }
     }
 
     @Override

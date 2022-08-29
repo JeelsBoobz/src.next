@@ -105,21 +105,6 @@ public class TopToolbarOverlayCoordinator implements SceneOverlay {
         mMediator.setIsAndroidViewVisible(isVisible);
     }
 
-    /** @param visible Whether the overlay and shadow should be visible despite other signals. */
-    public void setManualVisibility(boolean visible) {
-        mMediator.setManualVisibility(visible);
-    }
-
-    /** @param xOffset The x offset of the toolbar. */
-    public void setXOffset(float xOffset) {
-        mMediator.setXOffset(xOffset);
-    }
-
-    /** @param anonymize Whether the URL should be hidden when the layer is rendered. */
-    public void setAnonymize(boolean anonymize) {
-        mMediator.setAnonymize(anonymize);
-    }
-
     /** Clean up this component. */
     public void destroy() {
         mChangeProcessor.destroy();
