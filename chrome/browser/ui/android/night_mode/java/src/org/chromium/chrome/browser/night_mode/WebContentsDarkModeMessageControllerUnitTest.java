@@ -18,7 +18,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.res.Resources;
 
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -26,16 +25,15 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
 
 import org.chromium.base.Callback;
-import org.chromium.base.FeatureList;
-import org.chromium.base.FeatureList.TestValues;
+import org.chromium.base.FeatureOverrides;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
 import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncherFactory;
@@ -155,8 +153,7 @@ public class WebContentsDarkModeMessageControllerUnitTest {
         }
     }
 
-    @Rule public JniMocker mJniMocker = new JniMocker();
-
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock Activity mMockActivity;
     @Mock Profile mMockProfile;
     @Mock WebContents mMockWebContents;
@@ -171,8 +168,6 @@ public class WebContentsDarkModeMessageControllerUnitTest {
 
     @Before
     public void setup() {
-        MockitoAnnotations.initMocks(this);
-
         when(mMockActivity.getResources()).thenReturn(mMockResources);
         when(mMockResources.getString(anyInt())).thenReturn(TEST_LINK_STRING);
         when(mMockResources.getString(eq(R.string.auto_dark_message_title)))
@@ -193,20 +188,13 @@ public class WebContentsDarkModeMessageControllerUnitTest {
         ShadowWebContentsDarkModeController.sIsFeatureEnabled = true;
     }
 
-    @After
-    public void tearDown() {
-        FeatureList.setTestValues(null);
-    }
-
     private void setOptOut(boolean optOut) {
         ShadowWebContentsDarkModeController.sIsFeatureEnabled = optOut;
         if (!optOut) {
-            FeatureList.TestValues testValues = new TestValues();
-            testValues.addFieldTrialParamOverride(
+            FeatureOverrides.overrideParam(
                     ChromeFeatureList.DARKEN_WEBSITES_CHECKBOX_IN_THEMES_SETTING,
                     WebContentsDarkModeMessageController.OPT_OUT_PARAM,
-                    Boolean.toString(optOut));
-            FeatureList.setTestValues(testValues);
+                    optOut);
         }
     }
 
@@ -404,12 +392,10 @@ public class WebContentsDarkModeMessageControllerUnitTest {
     @Test
     public void testDialogController_ClickPositiveButton_FeedbackEnabled() {
         // Enable feedback.
-        FeatureList.TestValues testValues = new TestValues();
-        testValues.addFieldTrialParamOverride(
+        FeatureOverrides.overrideParam(
                 ChromeFeatureList.DARKEN_WEBSITES_CHECKBOX_IN_THEMES_SETTING,
                 WebContentsDarkModeMessageController.FEEDBACK_DIALOG_PARAM,
-                Boolean.toString(true));
-        FeatureList.setTestValues(testValues);
+                true);
 
         // Click on positive button.
         WebContentsDarkModeMessageController.attemptToShowDialog(
@@ -428,12 +414,10 @@ public class WebContentsDarkModeMessageControllerUnitTest {
     @Test
     public void testDialogController_ClickPositiveButton_FeedbackDisabled() {
         // Disable feedback.
-        FeatureList.TestValues testValues = new TestValues();
-        testValues.addFieldTrialParamOverride(
+        FeatureOverrides.overrideParam(
                 ChromeFeatureList.DARKEN_WEBSITES_CHECKBOX_IN_THEMES_SETTING,
                 WebContentsDarkModeMessageController.FEEDBACK_DIALOG_PARAM,
-                Boolean.toString(false));
-        FeatureList.setTestValues(testValues);
+                false);
 
         // Click on positive button.
         WebContentsDarkModeMessageController.attemptToShowDialog(
@@ -460,20 +444,6 @@ public class WebContentsDarkModeMessageControllerUnitTest {
                 "Shown dialog model should be null after clicking the negative button.",
                 mModalDialogManager.mShownDialogModel);
         verify(mMockTracker, times(1)).dismissed(eq(OPT_OUT_FEATURE));
-    }
-
-    @Test
-    public void testShowDialog_ClickTitleIcon() {
-        // Click on title icon.
-        WebContentsDarkModeMessageController.attemptToShowDialog(
-                mMockActivity, mMockProfile, TEST_URL, mModalDialogManager);
-        mModalDialogManager.clickButton(ButtonType.TITLE_ICON);
-
-        // Verify not dismissed.
-        Assert.assertNotNull(
-                "Shown dialog model should be non-null after clicking the title icon.",
-                mModalDialogManager.mShownDialogModel);
-        verify(mMockTracker, never()).dismissed(eq(OPT_OUT_FEATURE));
     }
 
     @Test

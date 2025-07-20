@@ -29,6 +29,10 @@ class DiceTabHelper : public content::WebContentsUserData<DiceTabHelper>,
                                    signin_metrics::PromoAction,
                                    content::WebContents*,
                                    const CoreAccountInfo&)>;
+  // Callback starting the History syncing. This is a repeating callback,
+  // because multiple `ProcessDiceHeaderDelegateImpl` may make copies of it.
+  using EnableHistorySyncOptinCallback = base::RepeatingCallback<
+      void(Profile*, content::WebContents*, const CoreAccountInfo&)>;
 
   // Callback displaying a signin error to the user. This is a repeating
   // callback, because multiple `ProcessDiceHeaderDelegateImpl` may make copies
@@ -42,6 +46,9 @@ class DiceTabHelper : public content::WebContentsUserData<DiceTabHelper>,
   // Returns the default callback to enable sync in a browser window. Does
   // nothing if there is no browser associated with the web contents.
   static EnableSyncCallback GetEnableSyncCallbackForBrowser();
+  // Returns the default callback to turn on history sync in a browser window.
+  // Does nothing if there is no browser associated with the web contents.
+  static EnableHistorySyncOptinCallback GetHistorySyncOptinCallbackForBrowser();
 
   // Returns the default callback to show a signin error in a browser window.
   // Does nothing if there is no browser associated with the web contents.
@@ -70,12 +77,20 @@ class DiceTabHelper : public content::WebContentsUserData<DiceTabHelper>,
     return state_.enable_sync_callback;
   }
 
+  const EnableHistorySyncOptinCallback& GetHistorySyncOptinCallback() {
+    return state_.history_sync_optin_callback;
+  }
+
   const ShowSigninErrorCallback& GetShowSigninErrorCallback() {
     return state_.show_signin_error_callback;
   }
 
   const OnSigninHeaderReceived& GetOnSigninHeaderReceived() {
     return state_.on_signin_header_received_callback;
+  }
+
+  void SetAccessPoint(signin_metrics::AccessPoint access_point) {
+    state_.signin_access_point = access_point;
   }
 
   // Initializes the DiceTabHelper for a new signin flow. Must be called once
@@ -91,6 +106,7 @@ class DiceTabHelper : public content::WebContentsUserData<DiceTabHelper>,
       const GURL& redirect_url,
       bool record_signin_started_metrics,
       EnableSyncCallback enable_sync_callback,
+      EnableHistorySyncOptinCallback history_sync_optin_callback,
       OnSigninHeaderReceived on_signin_header_received_callback,
       ShowSigninErrorCallback show_signin_error_callback);
 
@@ -130,13 +146,14 @@ class DiceTabHelper : public content::WebContentsUserData<DiceTabHelper>,
     GURL redirect_url;
     GURL signin_url;
     EnableSyncCallback enable_sync_callback;
+    EnableHistorySyncOptinCallback history_sync_optin_callback;
     OnSigninHeaderReceived on_signin_header_received_callback;
     ShowSigninErrorCallback show_signin_error_callback;
 
     // By default the access point refers to web signin, as after a reset the
     // user may sign in again in the same tab.
     signin_metrics::AccessPoint signin_access_point =
-        signin_metrics::AccessPoint::ACCESS_POINT_WEB_SIGNIN;
+        signin_metrics::AccessPoint::kWebSignin;
 
     signin_metrics::PromoAction signin_promo_action =
         signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO;

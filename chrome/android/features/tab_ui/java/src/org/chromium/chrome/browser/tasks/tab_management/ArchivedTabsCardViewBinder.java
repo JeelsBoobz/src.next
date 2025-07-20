@@ -8,11 +8,14 @@ import android.content.Context;
 import android.view.View;
 import android.widget.TextView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Binds the custom view for archived tabs. */
+@NullMarked
 public class ArchivedTabsCardViewBinder {
     /**
      * Binder method for the archived tabs custom message
@@ -35,10 +38,14 @@ public class ArchivedTabsCardViewBinder {
         } else if (ArchivedTabsCardViewProperties.ARCHIVE_TIME_DELTA_DAYS == key) {
             int inactiveTimeDeltaDays =
                     model.get(ArchivedTabsCardViewProperties.ARCHIVE_TIME_DELTA_DAYS);
+            int tabCardSubtitleRes =
+                    ChromeFeatureList.sAndroidTabDeclutterArchiveTabGroups.isEnabled()
+                            ? R.plurals.archived_tab_card_subtitle_with_tab_groups
+                            : R.plurals.archived_tab_card_subtitle;
             String subtitle =
                     context.getResources()
                             .getQuantityString(
-                                    R.plurals.archived_tab_card_subtitle,
+                                    tabCardSubtitleRes,
                                     inactiveTimeDeltaDays,
                                     inactiveTimeDeltaDays);
             ((TextView) view.findViewById(R.id.subtitle)).setText(subtitle);

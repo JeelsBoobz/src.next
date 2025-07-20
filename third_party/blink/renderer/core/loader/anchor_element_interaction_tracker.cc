@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/loader/anchor_element_interaction_tracker.h"
 
+#include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/time/time.h"
@@ -27,7 +28,12 @@
 
 namespace blink {
 
+BASE_FEATURE(kPreloadingNoSamePageFragmentAnchorTracking,
+             "PreloadingNoSamePageFragmentAnchorTracking",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 namespace {
+
 constexpr double eps = 1e-9;
 const base::TimeDelta kMousePosQueueTimeDelta{base::Milliseconds(500)};
 const base::TimeDelta kMouseAccelerationAndVelocityInterval{
@@ -285,14 +291,6 @@ void AnchorElementInteractionTracker::Trace(Visitor* visitor) const {
   AnchorElementViewportPositionTracker::Observer::Trace(visitor);
 }
 
-// static
-base::TimeDelta AnchorElementInteractionTracker::GetHoverDwellTime() {
-  static base::FeatureParam<base::TimeDelta> hover_dwell_time{
-      &blink::features::kSpeculationRulesPointerHoverHeuristics,
-      "HoverDwellTime", base::Milliseconds(200)};
-  return hover_dwell_time.Get();
-}
-
 void AnchorElementInteractionTracker::OnMouseMoveEvent(
     const WebMouseEvent& mouse_event) {
   mouse_motion_estimator_->OnMouseMoveEvent(mouse_event.PositionInScreen());
@@ -348,12 +346,7 @@ void AnchorElementInteractionTracker::OnPointerEvent(
   }
 
   if (event_type == event_type_names::kPointerdown) {
-    // TODO(crbug.com/1297312): Check if user changed the default mouse
-    // settings
-    if (pointer_event.button() !=
-            static_cast<int>(WebPointerProperties::Button::kLeft) &&
-        pointer_event.button() !=
-            static_cast<int>(WebPointerProperties::Button::kMiddle)) {
+    if (!pointer_event.IsLinkClickButton()) {
       return;
     }
     interaction_host_->OnPointerDown(url);
@@ -366,9 +359,9 @@ void AnchorElementInteractionTracker::OnPointerEvent(
                  .is_mouse =
                      pointer_event.pointerType() == pointer_type_names::kMouse,
                  .anchor_id = AnchorElementId(*anchor),
-                 .timestamp = clock_->NowTicks() + GetHoverDwellTime()});
+                 .timestamp = clock_->NowTicks() + kModerateHoverDwellTime});
     if (!hover_timer_.IsActive()) {
-      hover_timer_.StartOneShot(GetHoverDwellTime(), FROM_HERE);
+      hover_timer_.StartOneShot(kModerateHoverDwellTime, FROM_HERE);
     }
   } else if (event_type == event_type_names::kPointerout) {
     // Since the pointer is no longer hovering on the link, there is no need to
@@ -457,7 +450,7 @@ void AnchorElementInteractionTracker::HoverTimerFired(TimerBase*) {
     next_fire_time =
         std::min(next_fire_time, hover_event_candidate.value.timestamp);
   }
-  WTF::RemoveAll(hover_event_candidates_, to_be_erased);
+  RemoveAll(hover_event_candidates_, to_be_erased);
   if (!next_fire_time.is_max()) {
     hover_timer_.StartOneShot(next_fire_time - now, FROM_HERE);
   }
@@ -484,10 +477,18 @@ AnchorElementInteractionTracker::FirstAnchorElementIncludingSelf(Node* node) {
 KURL AnchorElementInteractionTracker::GetHrefEligibleForPreloading(
     const HTMLAnchorElementBase& anchor) {
   KURL url = anchor.Href();
-  if (url.ProtocolIsInHTTPFamily()) {
-    return url;
+  if (!url.ProtocolIsInHTTPFamily()) {
+    return KURL();
   }
-  return KURL();
+  if (base::FeatureList::IsEnabled(
+          kPreloadingNoSamePageFragmentAnchorTracking) &&
+      url.HasFragmentIdentifier()) {
+    const KURL& document_url = anchor.GetDocument().Url();
+    if (EqualIgnoringFragmentIdentifier(url, document_url)) {
+      return KURL();
+    }
+  }
+  return url;
 }
 
 void AnchorElementInteractionTracker::AnchorPositionsUpdated(

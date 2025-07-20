@@ -5,9 +5,11 @@
 #include "chrome/browser/signin/signin_util.h"
 
 #include <memory>
+#include <string_view>
 
 #include "base/barrier_closure.h"
 #include "base/containers/contains.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -16,15 +18,15 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/supports_user_data.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/profile_management/profile_management_features.h"
 #include "chrome/browser/enterprise/util/managed_browser_utils.h"
-#include "chrome/browser/policy/cloud/user_policy_signin_service_internal.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/signin/account_reconcilor_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/sync/sync_service_factory.h"
+#include "chrome/browser/ui/hats/survey_config.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -36,9 +38,13 @@
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_managed_status_finder.h"
 #include "components/signin/public/identity_manager/accounts_mutator.h"
+#include "components/sync/base/user_selectable_type.h"
+#include "components/sync/service/sync_service.h"
+#include "components/sync/service/sync_user_settings.h"
 #include "content/public/browser/storage_partition.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_constants.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "net/cookies/canonical_cookie.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -55,6 +61,39 @@ void SetForceSigninPolicy(bool enable) {
   g_is_force_signin_enabled_cache = enable ? ENABLE : DISABLE;
 }
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+struct ChromeIdentityHatsTriggerFeatureMappingEntry {
+  const char* trigger;
+  const raw_ptr<const base::Feature> feature;
+};
+
+const ChromeIdentityHatsTriggerFeatureMappingEntry
+    kChromeIdentityHatsTriggerFeatureMapping[] = {
+        {kHatsSurveyTriggerIdentityAddressBubbleSignin,
+         &switches::kChromeIdentitySurveyAddressBubbleSignin},
+        {kHatsSurveyTriggerIdentitySigninPromoBubbleDismissed,
+         &switches::kChromeIdentitySurveySigninPromoBubbleDismissed},
+        {kHatsSurveyTriggerIdentityDiceWebSigninAccepted,
+         &switches::kChromeIdentitySurveyDiceWebSigninAccepted},
+        {kHatsSurveyTriggerIdentityDiceWebSigninDeclined,
+         &switches::kChromeIdentitySurveyDiceWebSigninDeclined},
+        {kHatsSurveyTriggerIdentityFirstRunSignin,
+         &switches::kChromeIdentitySurveyFirstRunSignin},
+        {kHatsSurveyTriggerIdentityPasswordBubbleSignin,
+         &switches::kChromeIdentitySurveyPasswordBubbleSignin},
+        {kHatsSurveyTriggerIdentityProfileMenuSignin,
+         &switches::kChromeIdentitySurveyProfileMenuSignin},
+        {kHatsSurveyTriggerIdentityProfilePickerAddProfileSignin,
+         &switches::kChromeIdentitySurveyProfilePickerAddProfileSignin},
+        {kHatsSurveyTriggerIdentitySigninInterceptProfileSeparation,
+         &switches::kChromeIdentitySurveySigninInterceptProfileSeparation},
+        {kHatsSurveyTriggerIdentitySwitchProfileFromProfileMenu,
+         &switches::kChromeIdentitySurveySwitchProfileFromProfileMenu},
+        {kHatsSurveyTriggerIdentitySwitchProfileFromProfilePicker,
+         &switches::kChromeIdentitySurveySwitchProfileFromProfilePicker},
+};
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
 }  // namespace
 
 ScopedForceSigninSetterForTesting::ScopedForceSigninSetterForTesting(
@@ -66,7 +105,7 @@ ScopedForceSigninSetterForTesting::~ScopedForceSigninSetterForTesting() {
   ResetForceSigninForTesting();  // IN-TEST
 }
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
 CookiesMover::CookiesMover(base::WeakPtr<Profile> source_profile,
                            base::WeakPtr<Profile> destination_profile,
                            base::OnceCallback<void()> callback)
@@ -133,7 +172,7 @@ void CookiesMover::OnCookiesReceived(
 void CookiesMover::OnCookiesMoved() {
   std::move(callback_).Run();
 }
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
 
 bool IsForceSigninEnabled() {
   if (g_is_force_signin_enabled_cache == NOT_CACHED) {
@@ -155,13 +194,11 @@ void ResetForceSigninForTesting() {
 }
 
 bool IsProfileDeletionAllowed(Profile* profile) {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  return !profile->IsMainProfile();
-#elif BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   return false;
 #else
   return true;
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif
 }
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -268,7 +305,7 @@ void RecordEnterpriseProfileCreationUserChoice(bool enforced_by_policy,
 PrimaryAccountError SetPrimaryAccountWithInvalidToken(
     Profile* profile,
     const std::string& user_email,
-    const std::string& gaia_id,
+    const GaiaId& gaia_id,
     bool is_under_advanced_protection,
     signin_metrics::AccessPoint access_point,
     signin_metrics::SourceForRefreshTokenOperation source) {
@@ -314,6 +351,10 @@ bool IsSigninPending(signin::IdentityManager* identity_manager) {
 
 SignedInState GetSignedInState(
     const signin::IdentityManager* identity_manager) {
+  if (!identity_manager) {
+    return SignedInState::kSignedOut;
+  }
+
   if (identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync)) {
     if (identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
             identity_manager->GetPrimaryAccountId(
@@ -323,19 +364,10 @@ SignedInState GetSignedInState(
     return SignedInState::kSyncing;
   }
 
-  // If explicit browser signin is not enabled, this returns `kSignedIn`
-  // regardless of the error state of the refresh token. There might for example
-  // be an error in the following two cases: (a) The account is managed. (b) The
-  // account is not managed, but the `SigninManager` has not been notified yet,
-  // which would sign the user out.
-  //
-  // If the error state of the primary account is relevant, then it needs to be
-  // checked in addition to this state.
   if (identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin)) {
     return identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
                identity_manager->GetPrimaryAccountId(
-                   signin::ConsentLevel::kSignin)) &&
-                   switches::IsExplicitBrowserSigninUIOnDesktopEnabled()
+                   signin::ConsentLevel::kSignin))
                ? SignedInState::kSignInPending
                : SignedInState::kSignedIn;
   }
@@ -347,5 +379,57 @@ SignedInState GetSignedInState(
 
   return SignedInState::kSignedOut;
 }
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+bool ShouldShowHistorySyncOptinScreen(Profile& profile) {
+  if (GetSignedInState(IdentityManagerFactory::GetForProfile(&profile)) !=
+      signin_util::SignedInState::kSignedIn) {
+    return false;
+  }
+
+  syncer::SyncService* sync_service =
+      SyncServiceFactory::GetForProfile(&profile);
+  if (!sync_service) {
+    return false;
+  }
+  if (sync_service->HasDisableReason(
+          syncer::SyncService::DISABLE_REASON_ENTERPRISE_POLICY)) {
+    return false;
+  }
+
+  syncer::UserSelectableTypeSet synced_data_types(
+      {syncer::UserSelectableType::kHistory, syncer::UserSelectableType::kTabs,
+       syncer::UserSelectableType::kSavedTabGroups});
+  for (auto type : synced_data_types) {
+    if (sync_service->GetUserSettings()->IsTypeManagedByPolicy(type) ||
+        sync_service->GetUserSettings()->IsTypeManagedByCustodian(type)) {
+      return false;
+    }
+  }
+
+  // Note: Post migration these preferences will be set by a single
+  // settings toggle and are expected to have the same value.
+  if (sync_service->GetUserSettings()->GetSelectedTypes().Has(
+          syncer::UserSelectableType::kHistory) &&
+      sync_service->GetUserSettings()->GetSelectedTypes().Has(
+          syncer::UserSelectableType::kTabs) &&
+      sync_service->GetUserSettings()->GetSelectedTypes().Has(
+          syncer::UserSelectableType::kSavedTabGroups)) {
+    return false;
+  }
+  return true;
+}
+
+bool IsFeatureEnabledForHatsTrigger(const std::string& trigger) {
+  for (const auto& entry : kChromeIdentityHatsTriggerFeatureMapping) {
+    if (trigger == entry.trigger) {
+      return base::FeatureList::IsEnabled(*entry.feature);
+    }
+  }
+  // No matching feature for the given trigger.
+  return false;
+}
+
+#endif  // BUILDFLAG(IS_LINUX) ||  BUILDFLAG(IS_MAC) ||  BUILDFLAG(IS_WIN)
 
 }  // namespace signin_util

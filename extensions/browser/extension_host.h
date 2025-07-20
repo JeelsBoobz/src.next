@@ -32,7 +32,6 @@ class ElapsedTimer;
 namespace content {
 class BrowserContext;
 class RenderProcessHost;
-class SiteInstance;
 }  // namespace content
 
 namespace extensions {
@@ -59,7 +58,7 @@ class ExtensionHost : public DeferredStartRenderHost,
   using CloseHandler = base::OnceCallback<void(ExtensionHost*)>;
 
   ExtensionHost(const Extension* extension,
-                content::SiteInstance* site_instance,
+                content::BrowserContext* browser_context,
                 const GURL& url,
                 mojom::ViewType host_type);
 
@@ -162,7 +161,6 @@ class ExtensionHost : public DeferredStartRenderHost,
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const url::Origin& security_origin,
                                   blink::mojom::MediaStreamType type) override;
-  bool IsNeverComposited(content::WebContents* web_contents) override;
   content::PictureInPictureResult EnterPictureInPicture(
       content::WebContents* web_contents) override;
   void ExitPictureInPicture() override;
@@ -221,10 +219,6 @@ class ExtensionHost : public DeferredStartRenderHost,
 
   // DeferredStartRenderHost:
   void CreateRendererNow() override;
-
-  // Message handlers.
-  void OnIncrementLazyKeepaliveCount();
-  void OnDecrementLazyKeepaliveCount();
 
   void MaybeNotifyRenderProcessReady();
   void NotifyRenderProcessReady();

@@ -18,7 +18,6 @@
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/nacl/common/nacl_process_type.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_child_process_host_iterator.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -160,14 +159,14 @@ ProcessMemoryInformation::ProcessMemoryInformation()
 ProcessMemoryInformation::ProcessMemoryInformation(
     const ProcessMemoryInformation& other) = default;
 
-ProcessMemoryInformation::~ProcessMemoryInformation() {}
+ProcessMemoryInformation::~ProcessMemoryInformation() = default;
 
 bool ProcessMemoryInformation::operator<(
     const ProcessMemoryInformation& rhs) const {
   return private_memory_footprint_kb < rhs.private_memory_footprint_kb;
 }
 
-ProcessData::ProcessData() {}
+ProcessData::ProcessData() = default;
 
 ProcessData::ProcessData(const ProcessData& rhs)
     : name(rhs.name),
@@ -175,7 +174,7 @@ ProcessData::ProcessData(const ProcessData& rhs)
       processes(rhs.processes) {
 }
 
-ProcessData::~ProcessData() {}
+ProcessData::~ProcessData() = default;
 
 ProcessData& ProcessData::operator=(const ProcessData& rhs) {
   name = rhs.name;
@@ -218,7 +217,7 @@ void MemoryDetails::StartFetch() {
       base::BindOnce(&MemoryDetails::CollectProcessData, this, child_info));
 }
 
-MemoryDetails::~MemoryDetails() {}
+MemoryDetails::~MemoryDetails() = default;
 
 std::string MemoryDetails::ToLogString(bool include_tab_title) {
   std::string log;
@@ -306,7 +305,7 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
       extensions::ProcessMap* process_map =
           extensions::ProcessMap::Get(context);
       DCHECK(process_map);
-      int rph_id = render_process_host->GetID();
+      int rph_id = render_process_host->GetDeprecatedID();
       process_is_for_extensions = process_map->Contains(rph_id);
 
       // For our purposes, don't count processes running hosted apps as
@@ -350,10 +349,15 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
   std::erase_if(vector, is_unknown);
 
   // Grab a memory dump for all processes.
-  memory_instrumentation::MemoryInstrumentation::GetInstance()
-      ->RequestPrivateMemoryFootprint(
-          base::kNullProcessId,
-          base::BindOnce(&MemoryDetails::DidReceiveMemoryDump, this));
+  auto* memory_instrumentation =
+      memory_instrumentation::MemoryInstrumentation::GetInstance();
+  if (memory_instrumentation) {
+    memory_instrumentation->RequestPrivateMemoryFootprint(
+        base::kNullProcessId,
+        base::BindOnce(&MemoryDetails::DidReceiveMemoryDump, this));
+  } else {
+    DidReceiveMemoryDump(false, nullptr);
+  }
 }
 
 void MemoryDetails::DidReceiveMemoryDump(

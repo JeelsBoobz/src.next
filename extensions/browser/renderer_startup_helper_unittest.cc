@@ -115,9 +115,11 @@ class RendererStartupHelperInterceptor : public RendererStartupHelper,
 
   void SetDeveloperMode(bool current_developer_mode) override {}
 
+  void SetUserScriptsAllowed(const std::string& extension_id,
+                             bool allowed) override {}
+
   void SetSessionInfo(version_info::Channel channel,
-                      mojom::FeatureSessionType session,
-                      bool is_lock_screen_context) override {}
+                      mojom::FeatureSessionType session) override {}
   void SetSystemFont(const std::string& font_family,
                      const std::string& font_size) override {}
 

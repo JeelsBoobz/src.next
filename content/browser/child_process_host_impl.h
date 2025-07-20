@@ -30,9 +30,6 @@
 
 namespace IPC {
 class Channel;
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-class MessageFilter;
-#endif
 }  // namespace IPC
 
 namespace content {
@@ -62,6 +59,11 @@ class CONTENT_EXPORT ChildProcessHostImpl : public ChildProcessHost,
   // Never returns MemoryDumpManager::kInvalidTracingProcessId.
   // Returns only memory_instrumentation::mojom::kServiceTracingProcessId in
   // single-process mode.
+  static uint64_t ChildProcessIdToTracingProcessId(
+      ChildProcessId child_process_id);
+
+  // TODO(crbug.com/379869738): Deprecated, please use
+  // ChildProcessIdToTracingProcessId above.
   static uint64_t ChildProcessUniqueIdToTracingProcessId(int child_process_id);
 
   // ChildProcessHost implementation
@@ -70,13 +72,10 @@ class CONTENT_EXPORT ChildProcessHostImpl : public ChildProcessHost,
   std::optional<mojo::OutgoingInvitation>& GetMojoInvitation() override;
   void CreateChannelMojo() override;
   bool IsChannelOpening() override;
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  void AddFilter(IPC::MessageFilter* filter) override;
-#endif
   void BindReceiver(mojo::GenericPendingReceiver receiver) override;
   void SetBatterySaverMode(bool battery_saver_mode_enabled) override;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void ReinitializeLogging(uint32_t logging_dest,
                            base::ScopedFD log_file_descriptor) override;
 #endif
@@ -93,14 +92,13 @@ class CONTENT_EXPORT ChildProcessHostImpl : public ChildProcessHost,
  private:
   friend class content::ChildProcessHost;
 
-  ChildProcessHostImpl(ChildProcessHostDelegate* delegate, IpcMode ipc_mode);
+  explicit ChildProcessHostImpl(ChildProcessHostDelegate* delegate);
 
   // mojom::ChildProcessHost implementation:
   void Ping(PingCallback callback) override;
   void BindHostReceiver(mojo::GenericPendingReceiver receiver) override;
 
   // IPC::Listener methods:
-  bool OnMessageReceived(const IPC::Message& msg) override;
   void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
   void OnBadMessageReceived(const IPC::Message& message) override;
@@ -120,20 +118,12 @@ class CONTENT_EXPORT ChildProcessHostImpl : public ChildProcessHost,
   // to the child process.
   std::optional<mojo::OutgoingInvitation> mojo_invitation_{std::in_place};
 
-  const IpcMode ipc_mode_;
   raw_ptr<ChildProcessHostDelegate> delegate_;
   base::Process peer_process_;
   bool opening_channel_;  // True while we're waiting the channel to be opened.
   std::unique_ptr<IPC::Channel> channel_;
   mojo::Remote<mojom::ChildProcess> child_process_;
   mojo::Receiver<mojom::ChildProcessHost> receiver_{this};
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  // Holds all the IPC message filters.  Since this object lives on the IO
-  // thread, we don't have a IPC::ChannelProxy and so we manage filters
-  // manually.
-  std::vector<scoped_refptr<IPC::MessageFilter>> filters_;
-#endif
 };
 
 }  // namespace content

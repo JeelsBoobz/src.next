@@ -13,6 +13,7 @@
 #include "base/rand_util.h"
 #include "base/time/default_tick_clock.h"
 #include "cc/metrics/begin_main_frame_metrics.h"
+#include "cc/metrics/frame_sequence_tracker_collection.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
@@ -23,8 +24,8 @@
 
 namespace {
 
-inline base::HistogramBase::Sample ToSample(int64_t value) {
-  return base::saturated_cast<base::HistogramBase::Sample>(value);
+inline base::HistogramBase::Sample32 ToSample(int64_t value) {
+  return base::saturated_cast<base::HistogramBase::Sample32>(value);
 }
 
 inline int64_t ApplyBucket(int64_t value) {
@@ -138,8 +139,7 @@ LocalFrameUkmAggregator::ScopedForcedLayoutTimer::ScopedForcedLayoutTimer(
       avoid_unnecessary_forced_layout_measurements_(
           avoid_unnecessary_forced_layout_measurements),
       should_report_uma_this_frame_(should_report_uma_this_frame),
-      is_pre_fcp_(is_pre_fcp),
-      record_ukm_for_current_frame_(record_ukm_for_current_frame) {
+      is_pre_fcp_(is_pre_fcp) {
   aggregator_->BeginForcedLayout();
 }
 
@@ -686,6 +686,7 @@ void LocalFrameUkmAggregator::EndForcedLayout(
 
     case DocumentUpdateReason::kAccessibility:
     case DocumentUpdateReason::kBaseColor:
+    case DocumentUpdateReason::kBaseSelect:
     case DocumentUpdateReason::kComputedStyle:
     case DocumentUpdateReason::kDisplayLock:
     case DocumentUpdateReason::kViewTransition:
@@ -701,6 +702,7 @@ void LocalFrameUkmAggregator::EndForcedLayout(
       break;
 
     case DocumentUpdateReason::kCanvas:
+    case DocumentUpdateReason::kCanvasDrawElement:
     case DocumentUpdateReason::kPlugin:
     case DocumentUpdateReason::kSVGImage:
       sub_metric = kContentDocumentUpdate;

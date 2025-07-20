@@ -36,9 +36,11 @@ BASE_DECLARE_FEATURE(kBookmarksTreeView);
 BASE_DECLARE_FEATURE(kBookmarkTriggerForPrerender2);
 BASE_DECLARE_FEATURE(kCertificateTransparencyAskBeforeEnabling);
 BASE_DECLARE_FEATURE(kCertVerificationNetworkTime);
+BASE_DECLARE_FEATURE(kClearUserDataUponProfileDestruction);
 
 #if BUILDFLAG(IS_LINUX)
 BASE_DECLARE_FEATURE(kDbusSecretPortal);
+BASE_DECLARE_FEATURE(kUseFreedesktopSecretKeyProvider);
 #endif
 
 BASE_DECLARE_FEATURE(kDestroyProfileOnBrowserClose);
@@ -46,10 +48,6 @@ BASE_DECLARE_FEATURE(kDestroySystemProfiles);
 
 #if BUILDFLAG(IS_CHROMEOS)
 BASE_DECLARE_FEATURE(kDoubleTapToZoomInTabletMode);
-#endif
-
-#if BUILDFLAG(IS_WIN)
-BASE_DECLARE_FEATURE(kUseAppBoundEncryptionProviderForEncryption);
 #endif
 
 BASE_DECLARE_FEATURE(kFlexOrgManagementDisclosure);
@@ -87,17 +85,8 @@ extern base::FeatureParam<bool>
     kNotificationOneTapUnsubscribeUseServiceIntentParam;
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS)
-BASE_DECLARE_FEATURE(kPlatformKeysAesEncryption);
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
-BASE_DECLARE_FEATURE(kPrerenderDSEHoldback);
 BASE_DECLARE_FEATURE(kPromoBrowserCommands);
 extern const char kBrowserCommandIdParam[];
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-BASE_DECLARE_FEATURE(kQuickSettingsPWANotifications);
-#endif
 
 #if !BUILDFLAG(IS_ANDROID)
 BASE_DECLARE_FEATURE(kReadAnythingPermanentAccessibility);
@@ -105,6 +94,7 @@ BASE_DECLARE_FEATURE(kReadAnythingPermanentAccessibility);
 
 #if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 BASE_DECLARE_FEATURE(kRegisterOsUpdateHandlerWin);
+BASE_DECLARE_FEATURE(kInstallPlatformExperienceHelperWin);
 #endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 BASE_DECLARE_FEATURE(kRestartNetworkServiceUnsandboxedForFailedLaunch);
@@ -113,9 +103,8 @@ BASE_DECLARE_FEATURE(kSandboxExternalProtocolBlockedWarning);
 
 #if BUILDFLAG(IS_LINUX)
 BASE_DECLARE_FEATURE(kSecretPortalKeyProviderUseForEncryption);
+BASE_DECLARE_FEATURE(kUseFreedesktopSecretKeyProviderForEncryption);
 #endif
-
-BASE_DECLARE_FEATURE(kSupportSearchSuggestionForPrerender2);
 
 BASE_DECLARE_FEATURE(kTriggerNetworkDataMigration);
 
@@ -133,6 +122,7 @@ BASE_DECLARE_FEATURE(kNoPreReadMainDllIfSsd);
 BASE_DECLARE_FEATURE(kNoPreReadMainDllStartup);
 extern const base::FeatureParam<base::TimeDelta>
     kNoPreReadMainDllStartup_StartupDuration;
+BASE_DECLARE_FEATURE(kAutoDeElevate);
 #endif
 
 BASE_DECLARE_FEATURE(kReportPakFileIntegrity);

@@ -5,10 +5,10 @@
 #include "chrome/browser/ui/extensions/mv2_disabled_dialog_controller.h"
 
 #include "base/barrier_closure.h"
-#include "base/check_is_test.h"
 #include "base/functional/bind.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/manifest_v2_experiment_manager.h"
 #include "chrome/browser/extensions/mv2_experiment_stage.h"
@@ -19,6 +19,7 @@
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "extensions/browser/extension_icon_placeholder.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/image_loader.h"
 #include "extensions/browser/pref_types.h"
@@ -118,7 +119,6 @@ void Mv2DisabledDialogController::TearDown() {
 }
 
 void Mv2DisabledDialogController::MaybeShowDisabledDialogForTesting() {
-  CHECK_IS_TEST();
   ComputeAffectedExtensions();
 }
 
@@ -204,16 +204,16 @@ void Mv2DisabledDialogController::MaybeShowDisabledDialog() {
   ManagementPolicy* policy =
       ExtensionSystem::Get(browser_->profile())->management_policy();
   affected_extensions_info_.erase(
-      std::remove_if(
-          affected_extensions_info_.begin(), affected_extensions_info_.end(),
-          [&](const ExtensionInfo& extension_info) {
-            const Extension* extension =
-                extension_registry->disabled_extensions().GetByID(
-                    extension_info.id);
-            return !extension ||
-                   !IsExtensionAffected(*extension, extension_prefs, policy,
-                                        dialog_ack_pref);
-          }),
+      std::remove_if(affected_extensions_info_.begin(),
+                     affected_extensions_info_.end(),
+                     [&](const ExtensionInfo& extension_info) {
+                       const Extension* extension =
+                           extension_registry->disabled_extensions().GetByID(
+                               extension_info.id);
+                       return !extension ||
+                              !IsExtensionAffected(*extension, extension_prefs,
+                                                   policy, dialog_ack_pref);
+                     }),
       affected_extensions_info_.end());
 
   // No extensions to show, do nothing.
@@ -240,9 +240,6 @@ void Mv2DisabledDialogController::MaybeShowDisabledDialog() {
 void Mv2DisabledDialogController::OnRemoveSelected() {
   CHECK(!affected_extensions_info_.empty());
   UserAcknowledgedDialog();
-
-  auto* extension_service =
-      ExtensionSystem::Get(browser_->profile())->extension_service();
   auto* extension_registry = ExtensionRegistry::Get(browser_->profile());
 
   for (const auto& extension_info : affected_extensions_info_) {
@@ -256,8 +253,9 @@ void Mv2DisabledDialogController::OnRemoveSelected() {
 
     // If an extension fails to be uninstalled, it will not pause the
     // uninstall of the other extensions on the list.
-    extension_service->UninstallExtension(
-        extension_info.id, UNINSTALL_REASON_USER_INITIATED, nullptr);
+    ExtensionRegistrar::Get(browser_->profile())
+        ->UninstallExtension(extension_info.id, UNINSTALL_REASON_USER_INITIATED,
+                             nullptr);
   }
 
   if (experiment_stage_ == MV2ExperimentStage::kDisableWithReEnable) {

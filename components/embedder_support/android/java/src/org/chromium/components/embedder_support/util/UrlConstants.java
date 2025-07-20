@@ -4,6 +4,7 @@
 
 package org.chromium.components.embedder_support.util;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.url.GURL;
 
 /**
@@ -12,6 +13,7 @@ import org.chromium.url.GURL;
  * <p>Do not add any more NTP related constants. TODO(crbug.com/40281619) Move NTP related constants
  * to ChromeUrlConstants.java
  */
+@NullMarked
 public class UrlConstants {
     public static final String APP_INTENT_SCHEME = "android-app";
     public static final String BLOB_SCHEME = "blob";
@@ -21,6 +23,7 @@ public class UrlConstants {
     public static final String CUSTOM_TAB_SCHEME = "customtab";
     public static final String DATA_SCHEME = "data";
     public static final String DEVTOOLS_SCHEME = "devtools";
+    public static final String DISTILLER_SCHEME = "chrome-distiller";
     public static final String DOCUMENT_SCHEME = "document";
     public static final String FIDO_SCHEME = "fido";
     public static final String FILE_SCHEME = "file";
@@ -121,17 +124,17 @@ public class UrlConstants {
     public static final String MY_ACTIVITY_URL_IN_QD =
             "https://myactivity.google.com/myactivity?utm_source=chrome_qd";
 
-    public static final String GOOGLE_EMBEDDED_PRIVACY_POLICY =
-            "https://policies.google.com/privacy/embedded";
-
-    public static final String GOOGLE_EMBEDDED_PRIVACY_POLICY_DARK_MODE =
-            "https://policies.google.com/privacy/embedded?color_scheme=dark";
+    public static final String GOOGLE_PRIVACY_POLICY = "https://policies.google.com/privacy";
+    public static final String GOOGLE_PRIVACY_POLICY_CHINA = "https://policies.google.cn/privacy";
 
     public static final String GOOGLE_URL = "https://www.google.com/";
 
     public static final String EXPLORE_HOST = "explore";
     public static final String EXPLORE_URL = "chrome-native://explore/";
     public static final String CHROME_DINO_URL = "chrome://dino/";
+
+    public static final String CHROME_EXTENSIONS_URL = "chrome://extensions/";
+    public static final String CHROME_WEBSTORE_URL = "https://chromewebstore.google.com/";
 
     public static final String LOCALHOST = "localhost";
 
@@ -147,7 +150,7 @@ public class UrlConstants {
     private static class Holder {
         private static final String SERIALIZED_NTP_URL =
                 "73,1,true,0,6,0,-1,0,-1,9,6,0,-1,15,1,0,-1,0,-1,false,false,chrome://newtab/";
-        private static GURL sNtpGurl =
+        private static final GURL sNtpGurl =
                 GURL.deserializeLatestVersionOnly(SERIALIZED_NTP_URL.replace(',', '\0'));
     }
 

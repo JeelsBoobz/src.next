@@ -20,6 +20,7 @@
 #include "chrome/browser/task_manager/task_manager_tester.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_content_setting_bubble_model_delegate.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/grit/generated_resources.h"
@@ -34,6 +35,7 @@
 #include "components/page_load_metrics/browser/observers/core/uma_page_load_metrics_observer.h"
 #include "components/permissions/permission_manager.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/permission_request_description.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_features.h"
@@ -218,7 +220,7 @@ IN_PROC_BROWSER_TEST_F(ChromeBackForwardCacheBrowserTest, BasicIframe) {
 }
 
 IN_PROC_BROWSER_TEST_F(ChromeBackForwardCacheBrowserTest,
-                       PermissionContextBase) {
+                       ContentSettingPermissionContextBase) {
   // HTTPS needed for GEOLOCATION permission
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
   https_server.AddDefaultHandlers(GetChromeTestDataDir());
@@ -244,7 +246,10 @@ IN_PROC_BROWSER_TEST_F(ChromeBackForwardCacheBrowserTest,
       ->RequestPermissionFromCurrentDocument(
           rfh_a.get(),
           content::PermissionRequestDescription(
-              blink::PermissionType::GEOLOCATION, /* user_gesture = */ true),
+              content::PermissionDescriptorUtil::
+                  CreatePermissionDescriptorForPermissionType(
+                      blink::PermissionType::GEOLOCATION),
+              /* user_gesture = */ true),
           callback.Get());
 
   // Ensure |rfh_a| is evicted from the cache because it is not allowed to
@@ -376,7 +381,7 @@ IN_PROC_BROWSER_TEST_F(ChromeBackForwardCacheBrowserTest,
       browser()->tab_strip_model()->GetActiveWebContents());
   std::unique_ptr<ContentSettingBubbleModel> model(
       ContentSettingBubbleModel::CreateContentSettingBubbleModel(
-          browser()->content_setting_bubble_model_delegate(),
+          browser()->GetFeatures().content_setting_bubble_model_delegate(),
           browser()->tab_strip_model()->GetActiveWebContents(),
           ContentSettingsType::MIXEDSCRIPT));
   model->OnCustomLinkClicked();
@@ -682,7 +687,7 @@ class ChromeBackForwardCacheBrowserWithEmbedTestBase
       blink::scheduler::WebSchedulerTrackedFeature feature,
       base::Location location) {
     content::FetchHistogramsFromChildProcesses();
-    base::HistogramBase::Sample sample = base::HistogramBase::Sample(feature);
+    base::HistogramBase::Sample32 sample = base::HistogramBase::Sample32(feature);
     base::Bucket expected_blocklisted(sample, 1);
 
     EXPECT_THAT(histogram_tester_->GetAllSamples(
@@ -763,7 +768,7 @@ class ChromeBackForwardCacheBrowserWithEmbedPdfTest
     static constexpr uint8_t kReasonHaveInnerContents = 32;
 
     content::FetchHistogramsFromChildProcesses();
-    base::HistogramBase::Sample sample = base::HistogramBase::Sample(
+    base::HistogramBase::Sample32 sample = base::HistogramBase::Sample32(
         UseOopif() ? kReasonBlocklistedFeatures : kReasonHaveInnerContents);
     base::Bucket expected_not_restored(sample, 1);
 
@@ -914,7 +919,8 @@ IN_PROC_BROWSER_TEST_P(
 }
 
 // Flaky: crbug.com/40935990
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
+    BUILDFLAG(IS_WIN)
 #define MAYBE_DoesNotCachePageWithEmbeddedPdfAppendedOnPageLoaded \
   DISABLED_DoesNotCachePageWithEmbeddedPdfAppendedOnPageLoaded
 #else

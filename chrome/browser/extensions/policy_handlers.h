@@ -9,7 +9,6 @@
 
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/policy/core/browser/configuration_policy_handler.h"
 
 namespace policy {
@@ -36,10 +35,10 @@ class ExtensionListPolicyHandler : public policy::ListPolicyHandler {
  protected:
   // ListPolicyHandler methods:
 
-  // Checks whether |value| contains a valid extension id (or a wildcard).
+  // Checks whether `value` contains a valid extension id (or a wildcard).
   bool CheckListEntry(const base::Value& value) override;
 
-  // Sets |prefs| at pref_path() to |filtered_list|.
+  // Sets `prefs` at pref_path() to `filtered_list`.
   void ApplyList(base::Value::List filtered_list, PrefValueMap* prefs) override;
 
  private:
@@ -76,7 +75,7 @@ class ExtensionInstallForceListPolicyHandler
       const policy::PolicyMap& policy_map);
 
  private:
-  // Parses the data in |policy_value| and writes them to |extension_dict|.
+  // Parses the data in `policy_value` and writes them to `extension_dict`.
   bool ParseList(const base::Value* policy_value,
                  base::Value::Dict* extension_dict,
                  policy::PolicyErrorMap* errors);
@@ -103,6 +102,7 @@ class ExtensionInstallBlockListPolicyHandler
   ExtensionListPolicyHandler list_handler_;
 };
 
+#if !BUILDFLAG(IS_ANDROID)
 // Implements additional checks for policies that are lists of extension
 // URLPatterns.
 class ExtensionURLPatternListPolicyHandler
@@ -127,6 +127,7 @@ class ExtensionURLPatternListPolicyHandler
  private:
   const char* pref_path_;
 };
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 class ExtensionSettingsPolicyHandler
     : public policy::SchemaValidatingPolicyHandler {
@@ -148,8 +149,8 @@ class ExtensionSettingsPolicyHandler
 
  private:
   // Performs sanitization for both Check/ApplyPolicySettings(). If an entry
-  // in |dict_value| doesn't pass validation, that entry is removed from the
-  // dictionary. Validation errors are stored in |errors| if non-null.
+  // in `dict_value` doesn't pass validation, that entry is removed from the
+  // dictionary. Validation errors are stored in `errors` if non-null.
   void SanitizePolicySettings(base::Value* dict_value,
                               policy::PolicyErrorMap* errors);
 };

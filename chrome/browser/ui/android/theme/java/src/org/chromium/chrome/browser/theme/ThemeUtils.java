@@ -4,27 +4,30 @@
 
 package org.chromium.chrome.browser.theme;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.ColorRes;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.content.ContextCompat;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
-import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.content_public.browser.RenderWidgetHostView;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.util.ColorUtils;
 
 /** Utility methods for theme colors. */
+@NullMarked
 public class ThemeUtils {
     /**
      * Alpha used when TextBox color is computed by brightening the Toolbar color using Color.WHITE.
@@ -44,7 +47,7 @@ public class ThemeUtils {
      * @return The background color of {@link Tab}.
      */
     public static @ColorInt int getBackgroundColor(Tab tab) {
-        if (tab.isNativePage()) return tab.getNativePage().getBackgroundColor();
+        if (tab.isNativePage()) return assumeNonNull(tab.getNativePage()).getBackgroundColor();
 
         WebContents tabWebContents = tab.getWebContents();
         RenderWidgetHostView rwhv =
@@ -52,7 +55,8 @@ public class ThemeUtils {
         @ColorInt
         int backgroundColor = rwhv != null ? rwhv.getBackgroundColor() : Color.TRANSPARENT;
         if (backgroundColor != Color.TRANSPARENT) return backgroundColor;
-        return ChromeColors.getPrimaryBackgroundColor(tab.getContext(), false);
+        return SurfaceColorUpdateUtils.getDefaultThemeColor(
+                tab.getContext(), /* isIncognito= */ false);
     }
 
     /**
@@ -90,14 +94,15 @@ public class ThemeUtils {
             Context context, @ColorInt int color, boolean isIncognito, boolean isCustomTab) {
         // Text box color on default toolbar background in incognito mode is a pre-defined color.
         if (isIncognito) {
-            return context.getColor(R.color.toolbar_text_box_background_incognito);
+            return SurfaceColorUpdateUtils.getOmniboxBackgroundColor(
+                    context, /* isIncognito= */ true);
         }
 
         // Text box color on default toolbar background in standard mode is a pre-defined
         // color instead of a calculated color.
         if (ThemeUtils.isUsingDefaultToolbarColor(context, false, color)) {
-            float tabElevation = context.getResources().getDimension(R.dimen.default_elevation_4);
-            return ChromeColors.getSurfaceColor(context, tabElevation);
+            return SurfaceColorUpdateUtils.getOmniboxBackgroundColor(
+                    context, /* isIncognito= */ false);
         }
 
         if (ColorUtils.shouldUseOpaqueTextboxBackground(color)) {
@@ -209,9 +214,15 @@ public class ThemeUtils {
                             ? R.color.default_icon_color_light_tint_list
                             : R.color.toolbar_icon_unfocused_activity_incognito_color;
         } else if (brandedColorScheme == BrandedColorScheme.LIGHT_BRANDED_THEME) {
-            colorId = R.color.default_icon_color_dark_tint_list;
+            colorId =
+                    isActivityFocused
+                            ? R.color.default_icon_color_dark_tint_list
+                            : R.color.toolbar_icon_unfocused_activity_dark_color;
         } else if (brandedColorScheme == BrandedColorScheme.DARK_BRANDED_THEME) {
-            colorId = R.color.default_icon_color_white_tint_list;
+            colorId =
+                    isActivityFocused
+                            ? R.color.default_icon_color_white_tint_list
+                            : R.color.toolbar_icon_unfocused_activity_light_color;
         }
         return colorId;
     }
@@ -226,7 +237,7 @@ public class ThemeUtils {
      */
     public static boolean isUsingDefaultToolbarColor(
             Context context, boolean isIncognito, @ColorInt int color) {
-        return color == ChromeColors.getDefaultThemeColor(context, isIncognito);
+        return color == SurfaceColorUpdateUtils.getDefaultThemeColor(context, isIncognito);
     }
 
     /**
@@ -253,8 +264,32 @@ public class ThemeUtils {
                     : SemanticColorUtils.getDividerLineBgColor(context);
         }
 
-        @ColorInt
-        int hairlineColor = ContextCompat.getColor(context, R.color.toolbar_hairline_overlay);
+        @ColorInt int hairlineColor;
+        if (ColorUtils.shouldUseLightForegroundOnBackground(toolbarColor)) {
+            hairlineColor = ContextCompat.getColor(context, R.color.toolbar_hairline_overlay_light);
+        } else {
+            hairlineColor = ContextCompat.getColor(context, R.color.toolbar_hairline_overlay_dark);
+        }
         return ColorUtils.overlayColor(toolbarColor, hairlineColor);
+    }
+
+    /**
+     * Returns the {@link BrandedColorScheme} for the toolbar.
+     *
+     * @param context The context to get the toolbar surface color.
+     * @param toolbarColor The background color of the toolbar.
+     * @param isIncognito true if the current tab is an incognito tab.
+     */
+    public static @BrandedColorScheme int getBrandedColorScheme(
+            Context context, @ColorInt int toolbarColor, boolean isIncognito) {
+        if (isIncognito) return BrandedColorScheme.INCOGNITO;
+
+        boolean isDefaultColor = isUsingDefaultToolbarColor(context, isIncognito, toolbarColor);
+        if (isDefaultColor) return BrandedColorScheme.APP_DEFAULT;
+
+        boolean isDarkTheme = ColorUtils.shouldUseLightForegroundOnBackground(toolbarColor);
+        return isDarkTheme
+                ? BrandedColorScheme.DARK_BRANDED_THEME
+                : BrandedColorScheme.LIGHT_BRANDED_THEME;
     }
 }

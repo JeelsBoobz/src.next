@@ -68,6 +68,7 @@ def _CheckForWrongMojomIncludes(input_api, output_api):
     # the boundary between Blink and non-Blink.
     allowed_interfaces = (
         'services/network/public/mojom/cross_origin_embedder_policy',
+        'services/network/public/mojom/document_isolation_policy',
         'services/network/public/mojom/early_hints',
         'services/network/public/mojom/fetch_api',
         'services/network/public/mojom/load_timing_info',
@@ -267,6 +268,14 @@ def _CheckForForbiddenChromiumCode(input_api, output_api):
             errors = audit_non_blink_usage.check(path, f.ChangedContents())
             if errors:
                 for error in errors:
+                    if not results:
+                        results.append(
+                            output_api.PresubmitNotifyResult(
+                                'Non-Blink usage violations detected. Please '
+                                'check if there are usable Blink equivalents; '
+                                'if none exist, please allowlist the new uses '
+                                'in third_party/blink/tools/blinkpy/presubmit/'
+                                'audit_non_blink_usage.py'))
                     msg = '%s:%d uses disallowed identifier %s' % (
                         path, error.line, error.identifier)
                     if error.advice:

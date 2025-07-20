@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/chrome_extension_cookies_factory.h"
 
+#include "chrome/browser/content_settings/cookie_settings_factory.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/extensions/chrome_extension_cookies.h"
 #include "chrome/browser/profiles/profile.h"
 
@@ -30,13 +32,14 @@ ChromeExtensionCookiesFactory::ChromeExtensionCookiesFactory()
           // Incognito gets separate extension cookies, too.
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/40257657): Check if this service is needed in
-              // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
               // TODO(crbug.com/41488885): Check if this service is needed for
               // Ash Internals.
               .WithAshInternals(ProfileSelection::kOwnInstance)
-              .Build()) {}
+              .Build()) {
+  DependsOn(CookieSettingsFactory::GetInstance());
+  DependsOn(HostContentSettingsMapFactory::GetInstance());
+}
 
 ChromeExtensionCookiesFactory::~ChromeExtensionCookiesFactory() = default;
 

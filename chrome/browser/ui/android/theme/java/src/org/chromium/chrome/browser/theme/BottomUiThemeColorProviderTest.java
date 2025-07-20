@@ -6,6 +6,8 @@ package org.chromium.chrome.browser.theme;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import android.content.Context;
 import android.content.res.ColorStateList;
@@ -25,6 +27,7 @@ import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.tabmodel.IncognitoStateProvider;
@@ -35,6 +38,7 @@ import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 public class BottomUiThemeColorProviderTest {
     @Rule public MockitoRule mMockitoJUnit = MockitoJUnit.rule();
     @Mock private BrowserControlsStateProvider mBrowserControlsStateProvider;
+    @Mock private BottomControlsStacker mBottomControlsStacker;
     @Mock private IncognitoStateProvider mIncognitoStateProvider;
     @Mock private ThemeColorProvider mToolbarThemeColorProvider;
     private Context mContext;
@@ -51,9 +55,8 @@ public class BottomUiThemeColorProviderTest {
         mContext =
                 new ContextThemeWrapper(
                         ContextUtils.getApplicationContext(), R.style.Theme_BrowserUI_DayNight);
-        mPrimaryBackgroundColorWithTopToolbar = SemanticColorUtils.getDialogBgColor(mContext);
-        mIncognitoBackgroundColorWithTopToolbar =
-                mContext.getColor(R.color.dialog_bg_color_dark_baseline);
+        mPrimaryBackgroundColorWithTopToolbar = SemanticColorUtils.getColorSurface(mContext);
+        mIncognitoBackgroundColorWithTopToolbar = mContext.getColor(R.color.tab_strip_bg_incognito);
         mPrimaryTintWithTopToolbar =
                 ContextCompat.getColorStateList(mContext, R.color.default_icon_color_tint_list);
         mIncognitoTintWithTopToolbar =
@@ -75,6 +78,7 @@ public class BottomUiThemeColorProviderTest {
                 new BottomUiThemeColorProvider(
                         mToolbarThemeColorProvider,
                         mBrowserControlsStateProvider,
+                        mBottomControlsStacker,
                         mIncognitoStateProvider,
                         mContext);
         mColorProvider.onIncognitoStateChanged(false);
@@ -99,10 +103,12 @@ public class BottomUiThemeColorProviderTest {
         mColorProvider.onControlsPositionChanged(ControlsPosition.BOTTOM);
         assertEquals(Color.RED, mColorProvider.getThemeColor());
         assertEquals(mToolbarTintList, mColorProvider.getTint());
+        verify(mBottomControlsStacker).notifyBackgroundColor(Color.RED);
 
         mColorProvider.onIncognitoStateChanged(true);
         assertEquals(Color.RED, mColorProvider.getThemeColor());
         assertEquals(mToolbarTintList, mColorProvider.getTint());
+        verify(mBottomControlsStacker, times(2)).notifyBackgroundColor(Color.RED);
 
         doReturn(mToolbarTintOtherList).when(mToolbarThemeColorProvider).getTint();
         mColorProvider.onTintChanged(
@@ -112,9 +118,11 @@ public class BottomUiThemeColorProviderTest {
         doReturn(Color.BLUE).when(mToolbarThemeColorProvider).getThemeColor();
         mColorProvider.onThemeColorChanged(Color.BLUE, false);
         assertEquals(Color.BLUE, mColorProvider.getThemeColor());
+        verify(mBottomControlsStacker).notifyBackgroundColor(Color.BLUE);
 
         mColorProvider.onControlsPositionChanged(ControlsPosition.TOP);
         assertEquals(mIncognitoBackgroundColorWithTopToolbar, mColorProvider.getThemeColor());
         assertEquals(mIncognitoTintWithTopToolbar, mColorProvider.getTint());
+        verify(mBottomControlsStacker, times(3)).notifyBackgroundColor(Color.RED);
     }
 }

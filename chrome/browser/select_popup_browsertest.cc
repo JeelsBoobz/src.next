@@ -12,10 +12,6 @@
 
 class SelectPopupBrowsertest : public InProcessBrowserTest {
  public:
-  SelectPopupBrowsertest() {
-    feature_list_.InitAndEnableFeature(blink::features::kCSSPseudoOpenClosed);
-  }
-
   void TestBody() override {}
   void RunTestOnMainThread() override {}
 

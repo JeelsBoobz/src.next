@@ -19,18 +19,23 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
+#include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/android/profile_key_startup_accessor.h"
 #include "chrome/browser/android/profile_key_util.h"
 #include "chrome/browser/android/tab_android.h"
-#include "chrome/browser/download/android/dangerous_download_infobar_delegate.h"
 #include "chrome/browser/download/android/download_manager_service.h"
 #include "chrome/browser/download/android/download_utils.h"
 #include "chrome/browser/download/android/new_navigation_observer.h"
+#include "chrome/browser/download/chrome_download_manager_delegate.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
+#include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/download/download_offline_content_provider.h"
 #include "chrome/browser/download/download_offline_content_provider_factory.h"
 #include "chrome/browser/download/download_stats.h"
+#include "chrome/browser/download/download_ui_safe_browsing_util.h"
 #include "chrome/browser/download/insecure_download_blocking.h"
 #include "chrome/browser/flags/android/chrome_feature_list.h"
 #include "chrome/browser/offline_pages/android/offline_page_bridge.h"
@@ -42,11 +47,13 @@
 #include "chrome/grit/branded_strings.h"
 #include "components/download/content/public/context_menu_download.h"
 #include "components/download/public/common/android/auto_resumption_handler.h"
+#include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_item.h"
 #include "components/infobars/content/content_infobar_manager.h"
 #include "components/pdf/common/constants.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/safe_browsing/buildflags.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_context.h"
@@ -66,6 +73,10 @@
 #include "ui/base/page_transition_types.h"
 #include "url/android/gurl_android.h"
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+#include "components/safe_browsing/content/common/file_type_policies.h"
+#endif
+
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/android/chrome_jni_headers/DownloadController_jni.h"
 
@@ -84,9 +95,10 @@ namespace {
 base::LazyInstance<base::Lock>::DestructorAtExit g_download_controller_lock_;
 
 void CreateContextMenuDownloadInternal(
+    const GURL& url,
     const content::WebContents::Getter& wc_getter,
     const content::ContextMenuParams& params,
-    bool is_link,
+    bool is_media,
     bool granted) {
   content::WebContents* web_contents = wc_getter.Run();
   if (!granted)
@@ -99,7 +111,8 @@ void CreateContextMenuDownloadInternal(
   RecordDownloadSource(DOWNLOAD_INITIATED_BY_CONTEXT_MENU);
   auto origin = offline_pages::android::OfflinePageBridge::GetEncodedOriginApp(
       web_contents);
-  download::CreateContextMenuDownload(web_contents, params, origin, is_link);
+  download::CreateContextMenuDownload(url, web_contents, params, origin,
+                                      is_media);
 }
 
 // Helper class for retrieving a DownloadManager.
@@ -422,20 +435,21 @@ void DownloadController::StartAndroidDownloadInternal(
                                 std::string(),  // referrer_charset
                                 std::string(),  // suggested_name
                                 info.original_mime_type, default_file_name_);
+
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+  // Log the SBClientDownloadExtensions enum value for the Android download.
+  int64_t uma_value = safe_browsing::FileTypePolicies::GetInstance()
+                          ->UmaValueForUTF16FilenameUnsafe(file_name);
+  base::UmaHistogramSparse("Download.AndroidDownload.FileExtension", uma_value);
+#endif
+
   ScopedJavaLocalRef<jobject> jurl =
       url::GURLAndroid::FromNativeGURL(env, info.url);
-  ScopedJavaLocalRef<jstring> juser_agent =
-      ConvertUTF8ToJavaString(env, info.user_agent);
-  ScopedJavaLocalRef<jstring> jmime_type =
-      ConvertUTF8ToJavaString(env, info.original_mime_type);
-  ScopedJavaLocalRef<jstring> jcookie =
-      ConvertUTF8ToJavaString(env, info.cookie);
   ScopedJavaLocalRef<jobject> jreferer =
       url::GURLAndroid::FromNativeGURL(env, info.referer);
-  ScopedJavaLocalRef<jstring> jfile_name =
-      base::android::ConvertUTF16ToJavaString(env, file_name);
   Java_DownloadController_enqueueAndroidDownloadManagerRequest(
-      env, jurl, juser_agent, jfile_name, jmime_type, jcookie, jreferer);
+      env, jurl, info.user_agent, file_name, info.original_mime_type,
+      info.cookie, jreferer);
 
   WebContents* web_contents = wc_getter.Run();
   CloseTabIfEmpty(web_contents, nullptr);
@@ -497,9 +511,13 @@ void DownloadController::OnDownloadUpdated(DownloadItem* item) {
   }
 
   if (item->IsDangerous() && (item->GetState() != DownloadItem::CANCELLED)) {
-    // Dont't show notification for a dangerous download, as user can resume
-    // the download after browser crash through notification.
-    OnDangerousDownload(item);
+    if (ShouldShowSafeBrowsingAndroidDownloadWarnings()) {
+      ShowDangerousDownloadWarning(item);
+    } else {
+      // Don't show notification for a dangerous download, as user can resume
+      // the download after browser crash through notification.
+      OnDangerousDownload(item);
+    }
     return;
   }
 
@@ -525,6 +543,31 @@ void DownloadController::OnDownloadDestroyed(download::DownloadItem* item) {
   }
 }
 
+void DownloadController::ShowDangerousDownloadWarning(
+    download::DownloadItem* item) {
+  DownloadItemModel model{item};
+  MaybeRecordDangerousDownloadWarningShown(model);
+
+  // Schedule the dangerous download to be canceled after a time delay.
+  if (DownloadCoreService* download_core_service =
+          DownloadCoreServiceFactory::GetForBrowserContext(
+              content::DownloadItemUtils::GetBrowserContext(item));
+      download_core_service && model.IsEphemeralWarning()) {
+    if (ChromeDownloadManagerDelegate* delegate =
+            download_core_service->GetDownloadManagerDelegate();
+        delegate) {
+      delegate->ScheduleCancelForEphemeralWarning(item->GetGuid());
+    }
+  }
+
+  // For generic filetype warnings, fall back to the DangerousDownloadDialog.
+  // TODO(crbug.com/397407934): Consider implementing matching UX for
+  // DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE to replace DangerousDownloadDialog.
+  if (item->GetDangerType() == download::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE) {
+    OnDangerousDownload(item);
+  }
+}
+
 void DownloadController::OnDangerousDownload(download::DownloadItem* item) {
   WebContents* web_contents = content::DownloadItemUtils::GetWebContents(item);
   if (!web_contents) {
@@ -547,9 +590,6 @@ void DownloadController::OnDangerousDownload(download::DownloadItem* item) {
 void DownloadController::EnableVerifyAppsDone(
     download::DownloadItem* item,
     safe_browsing::VerifyAppsEnabledResult result) {
-  base::UmaHistogramEnumeration(
-      "SBClientDownload.AndroidAppVerificationPromptResult", result);
-
   if (app_verification_prompt_download_ != nullptr) {
     app_verification_prompt_download_ = nullptr;
     OnDownloadComplete(item);
@@ -588,18 +628,20 @@ void DownloadController::OnDownloadComplete(download::DownloadItem* item) {
 }
 
 void DownloadController::StartContextMenuDownload(
+    const GURL& url,
     const ContextMenuParams& params,
     WebContents* web_contents,
-    bool is_link) {
-  int process_id = web_contents->GetRenderViewHost()->GetProcess()->GetID();
+    bool is_media) {
+  int process_id =
+      web_contents->GetRenderViewHost()->GetProcess()->GetDeprecatedID();
   int routing_id = web_contents->GetRenderViewHost()->GetRoutingID();
 
   const content::WebContents::Getter& wc_getter(
       base::BindRepeating(&GetWebContents, process_id, routing_id));
 
   AcquireFileAccessPermission(
-      wc_getter, base::BindOnce(&CreateContextMenuDownloadInternal, wc_getter,
-                                params, is_link));
+      wc_getter, base::BindOnce(&CreateContextMenuDownloadInternal, url,
+                                wc_getter, params, is_media));
 }
 
 ProfileKey* DownloadController::GetProfileKey(DownloadItem* download_item) {

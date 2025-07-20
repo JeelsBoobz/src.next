@@ -43,8 +43,9 @@ content::WebContents* AddAndReturnTabAt(
   params.pwa_navigation_capturing_force_off = true;
   Navigate(&params);
 
-  if (!params.navigated_or_inserted_contents)
+  if (!params.navigated_or_inserted_contents) {
     return nullptr;
+  }
 
   CoreTabHelper* core_tab_helper =
       CoreTabHelper::FromWebContents(params.navigated_or_inserted_contents);
@@ -78,7 +79,8 @@ content::WebContents* AddWebContents(
     const GURL& target_url,
     WindowOpenDisposition disposition,
     const blink::mojom::WindowFeatures& window_features,
-    NavigateParams::WindowAction window_action) {
+    NavigateParams::WindowAction window_action,
+    bool user_gesture) {
   // No code for this yet.
   DCHECK(disposition != WindowOpenDisposition::SAVE_TO_DISK);
   // Can't create a new contents for the current tab - invalid case.
@@ -94,6 +96,7 @@ content::WebContents* AddWebContents(
   // was created without a user gesture, we have to set |user_gesture| to true,
   // so it gets correctly focused.
   params.user_gesture = true;
+  params.original_user_gesture = user_gesture;
 
   ConfigureTabGroupForNavigation(&params);
 
@@ -117,8 +120,9 @@ void CloseWebContents(Browser* browser,
 }
 
 void ConfigureTabGroupForNavigation(NavigateParams* nav_params) {
-  if (!nav_params->source_contents)
+  if (!nav_params->source_contents) {
     return;
+  }
 
   if (!nav_params->browser || !nav_params->browser->SupportsWindowFeature(
                                   Browser::WindowFeature::FEATURE_TABSTRIP)) {
@@ -134,8 +138,9 @@ void ConfigureTabGroupForNavigation(NavigateParams* nav_params) {
   // If the source tab is not in the current tab strip (e.g. if the current
   // navigation is in a new window), don't set the group. Groups cannot be
   // shared across multiple windows.
-  if (source_index == TabStripModel::kNoTab)
+  if (source_index == TabStripModel::kNoTab) {
     return;
+  }
 
   // Do not set the group when the navigation is from bookmarks.
   if (ui::PageTransitionCoreTypeIs(nav_params->transition,

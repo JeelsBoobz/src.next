@@ -8,10 +8,10 @@ import android.content.res.ColorStateList;
 
 import androidx.annotation.ColorRes;
 import androidx.annotation.DrawableRes;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
 import org.chromium.url.GURL;
@@ -19,6 +19,7 @@ import org.chromium.url.GURL;
 /** Interface defining a provider for data needed by the {@link LocationBar}. */
 // TODO(crbug.com/40154848): Refine split between LocationBar properties and sub-component
 // properties, e.g. security state, which is only used by the status icon.
+@NullMarked
 public interface LocationBarDataProvider {
     /**
      * Observer interface for consumers who wish to subscribe to updates of LocationBarData. Since
@@ -45,7 +46,20 @@ public interface LocationBarDataProvider {
 
         default void onTitleChanged() {}
 
-        default void onUrlChanged() {}
+        /**
+         * Notifies when the tab changed. This is guaranteed to be called before onUrlChanged().
+         *
+         * @param previousTab The tab that was active before this change. May be null if there was
+         *     no previously selected tab.
+         */
+        default void onTabChanged(@Nullable Tab previousTab) {}
+
+        /**
+         * Notifies when the URL changed.
+         *
+         * @param isTabChanging whether this URL change event was caused by a tab change.
+         */
+        default void onUrlChanged(boolean isTabChanging) {}
 
         default void hintZeroSuggestRefresh() {}
 
@@ -63,11 +77,9 @@ public interface LocationBarDataProvider {
      * Returns the url of the current tab, represented as a GURL. Returns an empty GURL when there
      * is no tab.
      */
-    @NonNull
     GURL getCurrentGurl();
 
     /** Returns the delegate for the NewTabPage shown for the current tab. */
-    @NonNull
     NewTabPageDelegate getNewTabPageDelegate();
 
     /** Returns whether the currently active page is loading. */
@@ -101,8 +113,7 @@ public interface LocationBarDataProvider {
     boolean isOffTheRecord();
 
     /** Returns the currently active tab, if there is one. */
-    @Nullable
-    Tab getTab();
+    @Nullable Tab getTab();
 
     /** Returns whether the LocationBarDataProvider currently has an active tab. */
     boolean hasTab();
@@ -111,7 +122,6 @@ public interface LocationBarDataProvider {
     UrlBarData getUrlBarData();
 
     /** Returns the title of the current page, or the empty string if there is currently no tab. */
-    @NonNull
     String getTitle();
 
     /** Returns the primary color to use for the background. */

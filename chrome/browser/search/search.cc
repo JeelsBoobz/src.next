@@ -150,8 +150,7 @@ bool IsURLAllowedForSupervisedUser(const GURL& url, Profile& profile) {
       SupervisedUserServiceFactory::GetForProfile(&profile);
   supervised_user::SupervisedUserURLFilter* url_filter =
       supervised_user_service->GetURLFilter();
-  if (url_filter->GetFilteringBehaviorForURL(url) ==
-      supervised_user::FilteringBehavior::kBlock) {
+  if (url_filter->GetFilteringBehavior(url).IsBlocked()) {
     return false;
   }
   return true;
@@ -229,7 +228,7 @@ bool IsRenderedInInstantProcess(content::WebContents* contents,
     return false;
   }
 
-  return instant_service->IsInstantProcess(process_host->GetID());
+  return instant_service->IsInstantProcess(process_host->GetDeprecatedID());
 #endif
 }
 
@@ -303,6 +302,10 @@ bool IsInstantNTPURL(const GURL& url, Profile* profile) {
 
   GURL new_tab_url(GetNewTabPageURL(profile));
   return new_tab_url.is_valid() && MatchesOriginAndPath(url, new_tab_url);
+}
+
+bool IsSplitViewNewTabPage(const GURL& url) {
+  return url.spec() == chrome::kChromeUISplitViewNewTabPageURL;
 }
 
 GURL GetNewTabPageURL(Profile* profile) {

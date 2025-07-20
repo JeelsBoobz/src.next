@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -264,6 +265,66 @@ IN_PROC_BROWSER_TEST_P(
     EXPECT_EQ("TypeError: Failed to fetch", try_fetch_url(restricted_url));
   } else {
     EXPECT_EQ("fetch2 - dog\n", try_fetch_url(restricted_url));
+  }
+}
+
+IN_PROC_BROWSER_TEST_P(UserHostRestrictionsBrowserTest,
+                       PRE_UserRestrictedSitesArePersisted) {
+  // Note: We need a "real" extension here (instead of just a TestExtensionDir)
+  // because it needs to persist for the next test.
+  const Extension* extension =
+      LoadExtension(test_data_dir_.AppendASCII("simple_all_urls"));
+  ASSERT_TRUE(extension);
+
+  // Note: We don't use `embedded_test_server` to grab a URL here because the
+  // port would (potentially) change between the PRE_ test and the second test.
+  // Instead, just use a constructed URL. Since all we check is the permissions
+  // data, we don't need the URL to actually load in the browsertest.
+  const GURL restricted_url("https://example.com");
+  EXPECT_EQ(PermissionsData::PageAccess::kAllowed,
+            extension->permissions_data()->GetPageAccess(
+                restricted_url, extension_misc::kUnknownTabId, nullptr));
+
+  PermissionsManager* permissions_manager = PermissionsManager::Get(profile());
+  permissions_manager->AddUserRestrictedSite(
+      url::Origin::Create(restricted_url));
+
+  if (GetParam()) {
+    EXPECT_EQ(PermissionsData::PageAccess::kDenied,
+              extension->permissions_data()->GetPageAccess(
+                  restricted_url, extension_misc::kUnknownTabId, nullptr));
+  } else {
+    // Technically, 'AddUserRestrictedSite' should only happen if the feature is
+    // enabled. We can't DCHECK that (because then the version of these tests
+    // without the feature don't work), so we somewhat awkwardly just allow it,
+    // though it would not take effect when feature is disabled.
+    EXPECT_EQ(PermissionsData::PageAccess::kAllowed,
+              extension->permissions_data()->GetPageAccess(
+                  restricted_url, extension_misc::kUnknownTabId, nullptr));
+  }
+}
+
+IN_PROC_BROWSER_TEST_P(UserHostRestrictionsBrowserTest,
+                       UserRestrictedSitesArePersisted) {
+  const Extension* found_extension = nullptr;
+  for (const auto& extension :
+       ExtensionRegistry::Get(profile())->enabled_extensions()) {
+    if (extension->name() == "All Urls Extension") {
+      found_extension = extension.get();
+      break;
+    }
+  }
+  ASSERT_TRUE(found_extension);
+
+  const GURL restricted_url("https://example.com");
+  if (GetParam()) {
+    EXPECT_EQ(PermissionsData::PageAccess::kDenied,
+              found_extension->permissions_data()->GetPageAccess(
+                  restricted_url, extension_misc::kUnknownTabId, nullptr));
+  } else {
+    EXPECT_EQ(PermissionsData::PageAccess::kAllowed,
+              found_extension->permissions_data()->GetPageAccess(
+                  restricted_url, extension_misc::kUnknownTabId, nullptr));
   }
 }
 

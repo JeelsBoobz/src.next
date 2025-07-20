@@ -23,7 +23,9 @@ import './site_permissions/site_permissions_by_site.js';
 import './toolbar.js';
 
 import {CrContainerShadowMixinLit} from 'chrome://resources/cr_elements/cr_container_shadow_mixin_lit.js';
+import {getToastManager} from 'chrome://resources/cr_elements/cr_toast/cr_toast_manager.js';
 import type {CrViewManagerElement} from 'chrome://resources/cr_elements/cr_view_manager/cr_view_manager.js';
+import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
 import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
@@ -33,6 +35,7 @@ import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {ActivityLogExtensionPlaceholder} from './activity_log/activity_log.js';
 import type {ExtensionsDetailViewElement} from './detail_view.js';
 import type {ExtensionsItemListElement} from './item_list.js';
+import {TOAST_DURATION_MS} from './item_util.js';
 import {getCss} from './manager.css.js';
 import {getHtml} from './manager.html.js';
 import type {PageState} from './navigation_helper.js';
@@ -85,7 +88,8 @@ export interface ExtensionsManagerElement {
 
 // TODO(crbug.com/40270029): Always show a top shadow for the DETAILS, ERRORS and
 // SITE_PERMISSIONS_ALL_SITES pages.
-const ExtensionsManagerElementBase = CrContainerShadowMixinLit(CrLitElement);
+const ExtensionsManagerElementBase =
+    I18nMixinLit(CrContainerShadowMixinLit(CrLitElement));
 
 export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
   static get is() {
@@ -158,32 +162,35 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
     };
   }
 
-  canLoadUnpacked: boolean = false;
-  delegate: ServiceInterface = Service.getInstance();
-  inDevMode: boolean = loadTimeData.getBoolean('inDevMode');
-  isMv2DeprecationNoticeDismissed: boolean =
+  accessor canLoadUnpacked: boolean = false;
+  accessor delegate: ServiceInterface = Service.getInstance();
+  accessor inDevMode: boolean = loadTimeData.getBoolean('inDevMode');
+  accessor isMv2DeprecationNoticeDismissed: boolean =
       loadTimeData.getBoolean('MV2DeprecationNoticeDismissed');
-  showActivityLog: boolean = loadTimeData.getBoolean('showActivityLog');
-  enableEnhancedSiteControls: boolean =
+  accessor showActivityLog: boolean =
+      loadTimeData.getBoolean('showActivityLog');
+  accessor enableEnhancedSiteControls: boolean =
       loadTimeData.getBoolean('enableEnhancedSiteControls');
-  devModeControlledByPolicy: boolean = false;
-  protected isChildAccount_: boolean = false;
-  protected incognitoAvailable_: boolean = false;
-  filter: string = '';
-  protected errorPageItem_?: chrome.developerPrivate.ExtensionInfo;
-  protected detailViewItem_?: chrome.developerPrivate.ExtensionInfo;
-  protected activityLogItem_?: chrome.developerPrivate.ExtensionInfo|
-      ActivityLogExtensionPlaceholder;
-  protected extensions_: chrome.developerPrivate.ExtensionInfo[] = [];
-  protected apps_: chrome.developerPrivate.ExtensionInfo[] = [];
-  protected didInitPage_: boolean = false;
-  protected narrow_: boolean = false;
-  protected showDrawer_: boolean = false;
-  protected showLoadErrorDialog_: boolean = false;
-  protected showInstallWarningsDialog_: boolean = false;
-  protected installWarnings_: string[]|null = null;
-  protected showOptionsDialog_: boolean = false;
-  protected fromActivityLog_: boolean = false;
+  accessor devModeControlledByPolicy: boolean = false;
+  protected accessor isChildAccount_: boolean = false;
+  protected accessor incognitoAvailable_: boolean = false;
+  accessor filter: string = '';
+  protected accessor errorPageItem_: chrome.developerPrivate.ExtensionInfo|
+      undefined;
+  protected accessor detailViewItem_: chrome.developerPrivate.ExtensionInfo|
+      undefined;
+  protected accessor activityLogItem_: chrome.developerPrivate.ExtensionInfo|
+      ActivityLogExtensionPlaceholder|undefined;
+  protected accessor extensions_: chrome.developerPrivate.ExtensionInfo[] = [];
+  protected accessor apps_: chrome.developerPrivate.ExtensionInfo[] = [];
+  protected accessor didInitPage_: boolean = false;
+  protected accessor narrow_: boolean = false;
+  protected accessor showDrawer_: boolean = false;
+  protected accessor showLoadErrorDialog_: boolean = false;
+  protected accessor showInstallWarningsDialog_: boolean = false;
+  protected accessor installWarnings_: string[]|null = null;
+  protected accessor showOptionsDialog_: boolean = false;
+  protected accessor fromActivityLog_: boolean = false;
 
   /**
    * A promise resolver for any external files waiting for initPage_ to be
@@ -243,7 +250,7 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
     const changedPrivateProperties =
         changedProperties as Map<PropertyKey, unknown>;
     if (changedPrivateProperties.has('narrow_')) {
-      const drawer = this.shadowRoot!.querySelector('cr-drawer');
+      const drawer = this.shadowRoot.querySelector('cr-drawer');
       if (!this.narrow_ && drawer?.open) {
         drawer.close();
       }
@@ -335,6 +342,17 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
         } else {
           this.addItem_(listId, eventData.extensionInfo);
         }
+
+        // This is likely to trigger multiple times (one for each extension
+        // that's disabled. That's fine; we'll only show the toast for the first
+        // one, since we check first if it's open.
+        const toastManager = getToastManager();
+        if (this.showUnsupportedDeveloperExtensionDisabledToast_(
+                eventData.event_type, eventData.extensionInfo) &&
+            !toastManager.isToastOpen) {
+          toastManager.duration = TOAST_DURATION_MS;
+          toastManager.show(this.i18n('itemUnsupportedDeveloperModeToast'));
+        }
         break;
       case EventType.UNINSTALLED:
         this.removeItem_(eventData.item_id);
@@ -364,7 +382,7 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
   protected onMenuButtonClick_() {
     this.showDrawer_ = true;
     setTimeout(() => {
-      this.shadowRoot!.querySelector('cr-drawer')!.openDrawer();
+      this.shadowRoot.querySelector('cr-drawer')!.openDrawer();
     }, 0);
   }
 
@@ -554,7 +572,7 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
       e: CustomEvent<Error|chrome.developerPrivate.LoadError>) {
     this.showLoadErrorDialog_ = true;
     setTimeout(() => {
-      const dialog = this.shadowRoot!.querySelector('extensions-load-error')!;
+      const dialog = this.shadowRoot.querySelector('extensions-load-error')!;
       dialog.loadError = e.detail;
       dialog.show();
     }, 0);
@@ -567,7 +585,7 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
     this.onCloseDrawer_();
 
     const optionsDialog =
-        this.shadowRoot!.querySelector('extensions-options-dialog');
+        this.shadowRoot.querySelector('extensions-options-dialog');
     if (optionsDialog && optionsDialog.open) {
       this.showOptionsDialog_ = false;
     }
@@ -633,7 +651,7 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
       assert(newPage.extensionId);
       this.showOptionsDialog_ = true;
       setTimeout(() => {
-        this.shadowRoot!.querySelector('extensions-options-dialog')!.show(
+        this.shadowRoot.querySelector('extensions-options-dialog')!.show(
             data!,
         );
       }, 0);
@@ -657,7 +675,7 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
    * This method animates the closing of the drawer.
    */
   protected onCloseDrawer_() {
-    const drawer = this.shadowRoot!.querySelector('cr-drawer');
+    const drawer = this.shadowRoot.querySelector('cr-drawer');
     if (drawer && drawer.open) {
       drawer.close();
     }
@@ -669,8 +687,8 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
 
   protected onOptionsDialogClose_() {
     this.showOptionsDialog_ = false;
-    this.shadowRoot!.querySelector(
-                        'extensions-detail-view')!.focusOptionsButton();
+    this.shadowRoot.querySelector(
+                       'extensions-detail-view')!.focusOptionsButton();
   }
 
   private onViewEnterStart_() {
@@ -694,7 +712,7 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
 
     const extensionId =
         (e.composedPath()[0] as ExtensionsDetailViewElement).data.id;
-    const list = this.shadowRoot!.querySelector('extensions-item-list')!;
+    const list = this.shadowRoot.querySelector('extensions-item-list')!;
     const button = viewType === 'EXTENSIONS-DETAIL-VIEW' ?
         list.getDetailsButton(extensionId) :
         list.getErrorsButton(extensionId);
@@ -717,6 +735,24 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
   protected onInstallWarningsDialogClose_() {
     this.installWarnings_ = null;
     this.showInstallWarningsDialog_ = false;
+  }
+
+  /**
+   * Show a toast when an unpacked extension becomes disabled when the user is
+   * not in developer mode.
+   */
+  private showUnsupportedDeveloperExtensionDisabledToast_(
+      eventType: chrome.developerPrivate.EventType,
+      extensionInfo: chrome.developerPrivate.ExtensionInfo): boolean {
+    if (eventType !== chrome.developerPrivate.EventType.UNLOADED) {
+      return false;
+    }
+
+    return !this.inDevMode &&
+        extensionInfo.state ===
+        chrome.developerPrivate.ExtensionState.DISABLED &&
+        extensionInfo.location === chrome.developerPrivate.Location.UNPACKED &&
+        extensionInfo.disableReasons.unsupportedDeveloperExtension;
   }
 }
 

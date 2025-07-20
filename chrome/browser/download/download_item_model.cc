@@ -14,6 +14,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/supports_user_data.h"
@@ -36,8 +37,6 @@
 #include "chrome/browser/download/offline_item_utils.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
-#include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -47,7 +46,6 @@
 #include "components/download/public/common/download_item_rename_handler.h"
 #include "components/safe_browsing/buildflags.h"
 #include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
-#include "components/safe_browsing/content/common/file_type_policies.h"
 #include "components/safe_browsing/content/common/proto/download_file_types.pb.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/signin/public/base/consent_level.h"
@@ -63,7 +61,7 @@
 #include "ui/base/ui_base_features.h"
 #include "ui/color/color_id.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #endif
 
@@ -75,9 +73,21 @@
 #if BUILDFLAG(FULL_SAFE_BROWSING)
 #include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
 #include "chrome/browser/safe_browsing/advanced_protection_status_manager_factory.h"
-#include "chrome/browser/safe_browsing/download_protection/deep_scanning_request.h"
+#endif
+
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 #include "chrome/browser/safe_browsing/download_protection/download_feedback_service.h"
 #include "chrome/browser/enterprise/connectors/connectors_manager.h"
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/safe_browsing/download_protection/deep_scanning_request.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
+
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+#include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
+#include "chrome/browser/safe_browsing/safe_browsing_service.h"
+#include "components/safe_browsing/content/common/file_type_policies.h"
 #endif
 
 using DangerUiPattern = DownloadUIModel::DangerUiPattern;
@@ -96,7 +106,7 @@ namespace {
 // DownloadItem, and the lifetime of the model is shorter than the DownloadItem.
 class DownloadItemModelData : public base::SupportsUserData::Data {
  public:
-  ~DownloadItemModelData() override {}
+  ~DownloadItemModelData() override = default;
 
   // Get the DownloadItemModelData object for |download|. Returns NULL if
   // there's no model data.
@@ -106,9 +116,9 @@ class DownloadItemModelData : public base::SupportsUserData::Data {
   // object if not found. Always returns a non-NULL pointer, unless OOM.
   static DownloadItemModelData* GetOrCreate(DownloadItem* download);
 
-  // Whether the download should be displayed in the download shelf. True by
-  // default.
-  bool should_show_in_shelf_ = true;
+  // Whether the download should be displayed in the download UI on desktop
+  // platforms. True by default.
+  bool should_show_in_ui_ = true;
 
   // Whether the UI has been notified about this download.
   bool was_ui_notified_ = false;
@@ -160,7 +170,7 @@ DownloadItemModelData* DownloadItemModelData::GetOrCreate(
       static_cast<DownloadItemModelData*>(download->GetUserData(kKey));
   if (data == nullptr) {
     data = new DownloadItemModelData();
-    data->should_show_in_shelf_ = !download->IsTransient();
+    data->should_show_in_ui_ = !download->IsTransient();
     download->SetUserData(kKey, base::WrapUnique(data));
   }
   return data;
@@ -168,7 +178,9 @@ DownloadItemModelData* DownloadItemModelData::GetOrCreate(
 
 DownloadItemModelData::DownloadItemModelData() = default;
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+// This is for sending download reports from the download bubble UI on
+// desktop, so it is not needed on Android.
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION) && !BUILDFLAG(IS_ANDROID)
 void MaybeSendDownloadReport(bool did_proceed,
                              download::DownloadItem* download) {
   if (safe_browsing::SafeBrowsingService* sb_service =
@@ -180,7 +192,6 @@ void MaybeSendDownloadReport(bool did_proceed,
         did_proceed, /*show_download_in_folder=*/std::nullopt);
   }
 }
-
 #endif
 
 }  // namespace
@@ -291,6 +302,10 @@ int64_t DownloadItemModel::GetTotalBytes() const {
                                    : download_->GetTotalBytes();
 }
 
+int64_t DownloadItemModel::GetUploadedBytes() const {
+  return download_->GetUploadedBytes();
+}
+
 // TODO(asanka,rdsmith): Once 'open' moves exclusively to the
 //     ChromeDownloadManagerDelegate, we should calculate the percentage here
 //     instead of calling into the DownloadItem.
@@ -357,58 +372,9 @@ bool DownloadItemModel::IsInsecure() const {
   return download_->IsInsecure();
 }
 
-bool DownloadItemModel::ShouldRemoveFromShelfWhenComplete() const {
-  switch (download_->GetState()) {
-    case DownloadItem::IN_PROGRESS:
-      // If the download is dangerous or malicious, we should display a warning
-      // on the shelf until the user accepts the download.
-      if (IsDangerous())
-        return false;
-
-      // If the download is a trusted extension, temporary, or will be opened
-      // automatically, then it should be removed from the shelf on completion.
-      // TODO(crbug.com/40129365): The logic for deciding opening behavior
-      // should
-      //                          be in a central location.
-      return (download_crx_util::IsTrustedExtensionDownload(profile(),
-                                                            *download_) ||
-              download_->IsTemporary() || download_->GetOpenWhenComplete() ||
-              download_->ShouldOpenFileBasedOnExtension());
-
-    case DownloadItem::COMPLETE:
-      // If the download completed, then rely on GetAutoOpened() to check for
-      // opening behavior. This should accurately reflect whether the download
-      // was successfully opened.  Extensions, for example, may fail to open.
-      return download_->GetAutoOpened() || download_->IsTemporary();
-
-    case DownloadItem::CANCELLED:
-    case DownloadItem::INTERRUPTED:
-      // Interrupted or cancelled downloads should remain on the shelf.
-      return false;
-
-    case DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED();
-  }
-
-  NOTREACHED();
-}
-
 bool DownloadItemModel::ShouldShowDownloadStartedAnimation() const {
   return !download_->IsSavePackageDownload() &&
          !download_crx_util::IsTrustedExtensionDownload(profile(), *download_);
-}
-
-bool DownloadItemModel::ShouldShowInShelf() const {
-  const DownloadItemModelData* data = DownloadItemModelData::Get(download_);
-  if (data)
-    return data->should_show_in_shelf_;
-
-  return !download_->IsTransient();
-}
-
-void DownloadItemModel::SetShouldShowInShelf(bool should_show) {
-  DownloadItemModelData* data = DownloadItemModelData::GetOrCreate(download_);
-  data->should_show_in_shelf_ = should_show;
 }
 
 bool DownloadItemModel::ShouldNotifyUI() const {
@@ -416,13 +382,13 @@ bool DownloadItemModel::ShouldNotifyUI() const {
     return false;
 
   // The browser is only interested in new active downloads. History downloads
-  // that are completed or interrupted are not displayed on the shelf. The
+  // that are completed or interrupted are not displayed in the UI. The
   // downloads page independently listens for new downloads when it is active.
   // Note that the UI will be notified of downloads even if they are not meant
-  // to be displayed on the shelf (i.e. ShouldShowInShelf() returns false). This
-  // is because: *  The shelf isn't the only UI. E.g. on Android, the UI is the
-  // system
-  //    DownloadManager.
+  // to be displayed in the desktop downloads UI (i.e. ShouldShowInUi() returns
+  // false). This is because:
+  // *  The desktop UI (download bubble) isn't the only UI. E.g. on Android,
+  //    there is a separate download UI implemented in Java.
   // *  There are other UI activities that need to be performed. E.g. if the
   //    download was initiated from a new tab, then that tab should be closed.
   return download_->GetDownloadCreationType() !=
@@ -663,7 +629,7 @@ void DownloadItemModel::OpenUsingPlatformHandler() {
                      download_->GetMimeType());
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 std::optional<DownloadCommands::Command>
 DownloadItemModel::MaybeGetMediaAppAction() const {
   std::string mime_type = GetMimeType();
@@ -682,7 +648,7 @@ DownloadItemModel::MaybeGetMediaAppAction() const {
 
 void DownloadItemModel::OpenUsingMediaApp() {
   ash::SystemAppLaunchParams params;
-  params.launch_paths.push_back(GetTargetFilePath());
+  params.launch_paths.push_back(GetFullPath());
   ash::LaunchSystemWebAppAsync(profile(), ash::SystemWebAppType::MEDIA, params);
 
   RecordDownloadOpen(DOWNLOAD_OPEN_METHOD_MEDIA_APP, GetMimeType());
@@ -707,16 +673,18 @@ bool DownloadItemModel::IsCommandEnabled(
       // filename. Don't base an "Always open" decision based on it. Also
       // exclude extensions.
       return download_->CanOpenDownload() &&
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
              safe_browsing::FileTypePolicies::GetInstance()
                  ->IsAllowedToOpenAutomatically(
                      download_->GetTargetFilePath()) &&
+#endif
              !download_crx_util::IsExtensionDownload(*download_);
     case DownloadCommands::PAUSE:
       return !download_->IsSavePackageDownload() &&
              DownloadUIModel::IsCommandEnabled(download_commands, command);
     case DownloadCommands::OPEN_WITH_MEDIA_APP:
     case DownloadCommands::EDIT_WITH_MEDIA_APP: {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       std::optional<DownloadCommands::Command> media_app_command =
           MaybeGetMediaAppAction();
 
@@ -819,14 +787,13 @@ void DownloadItemModel::ExecuteCommand(DownloadCommands* download_commands,
       break;
     }
     case DownloadCommands::BYPASS_DEEP_SCANNING_AND_OPEN:
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
       SetOpenWhenComplete(true);
 #endif
       [[fallthrough]];
     case DownloadCommands::BYPASS_DEEP_SCANNING:
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
       CompleteSafeBrowsingScan();
-#endif
       if (download_->GetDangerType() ==
               download::DOWNLOAD_DANGER_TYPE_ASYNC_LOCAL_PASSWORD_SCANNING ||
           download_->GetDangerType() ==
@@ -838,6 +805,7 @@ void DownloadItemModel::ExecuteCommand(DownloadCommands* download_commands,
         LogDeepScanEvent(download_,
                          safe_browsing::DeepScanEvent::kPromptBypassed);
       }
+#endif
       [[fallthrough]];
     case DownloadCommands::KEEP:
       if (IsInsecure()) {
@@ -848,13 +816,13 @@ void DownloadItemModel::ExecuteCommand(DownloadCommands* download_commands,
         break;
       }
       DCHECK(IsDangerous());
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
       MaybeSendDownloadReport(/*did_proceed=*/true, download_);
 #endif
       download_->ValidateDangerousDownload();
       break;
     case DownloadCommands::DISCARD:
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
       MaybeSendDownloadReport(/*did_proceed=*/false, download_);
       if (GetDangerType() == download::DOWNLOAD_DANGER_TYPE_ASYNC_SCANNING) {
         LogDeepScanEvent(download_, safe_browsing::DeepScanEvent::kScanDeleted);
@@ -863,7 +831,7 @@ void DownloadItemModel::ExecuteCommand(DownloadCommands* download_commands,
       DownloadUIModel::ExecuteCommand(download_commands, command);
       break;
     case DownloadCommands::LEARN_MORE_SCANNING: {
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
       using safe_browsing::DownloadProtectionService;
 
       safe_browsing::SafeBrowsingService* sb_service =
@@ -895,13 +863,17 @@ void DownloadItemModel::ExecuteCommand(DownloadCommands* download_commands,
       DownloadUIModel::ExecuteCommand(download_commands, command);
       break;
     case DownloadCommands::DEEP_SCAN: {
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION) && !BUILDFLAG(IS_ANDROID)
+      // Deep scanning is not supported on Android.
       safe_browsing::DownloadProtectionService::UploadForConsumerDeepScanning(
           download_,
           DownloadItemWarningData::DeepScanTrigger::TRIGGER_CONSUMER_PROMPT,
           /*password=*/std::nullopt);
+#endif
       break;
     }
     case DownloadCommands::CANCEL_DEEP_SCAN: {
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
       DownloadCoreService* download_core_service =
           DownloadCoreServiceFactory::GetForBrowserContext(
               content::DownloadItemUtils::GetBrowserContext(download_));
@@ -913,16 +885,14 @@ void DownloadItemModel::ExecuteCommand(DownloadCommands* download_commands,
       delegate->CheckClientDownloadDone(
           download_->GetId(),
           safe_browsing::DownloadCheckResult::PROMPT_FOR_SCANNING);
+#endif
       break;
     }
   }
 }
 
 TailoredWarningType DownloadItemModel::GetTailoredWarningType() const {
-  if (!base::FeatureList::IsEnabled(safe_browsing::kDownloadTailoredWarnings)) {
-    return TailoredWarningType::kNoTailoredWarning;
-  }
-
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   download::DownloadDangerType danger_type = GetDangerType();
   TailoredVerdict tailored_verdict = safe_browsing::DownloadProtectionService::
       GetDownloadProtectionTailoredVerdict(download_);
@@ -936,12 +906,9 @@ TailoredWarningType DownloadItemModel::GetTailoredWarningType() const {
           download::DOWNLOAD_DANGER_TYPE_DANGEROUS_ACCOUNT_COMPROMISE &&
       tailored_verdict.tailored_verdict_type() ==
           TailoredVerdict::COOKIE_THEFT) {
-    if (base::Contains(tailored_verdict.adjustments(),
-                       TailoredVerdict::ACCOUNT_INFO_STRING)) {
-      return TailoredWarningType::kCookieTheftWithAccountInfo;
-    }
     return TailoredWarningType::kCookieTheft;
   }
+#endif
 
   return TailoredWarningType::kNoTailoredWarning;
 }
@@ -973,7 +940,6 @@ DangerUiPattern DownloadItemModel::GetDangerUiPattern() const {
 
   switch (GetTailoredWarningType()) {
     case TailoredWarningType::kCookieTheft:
-    case TailoredWarningType::kCookieTheftWithAccountInfo:
       return DangerUiPattern::kDangerous;
     case TailoredWarningType::kSuspiciousArchive:
       return DangerUiPattern::kSuspicious;
@@ -1017,6 +983,19 @@ DangerUiPattern DownloadItemModel::GetDangerUiPattern() const {
   return DangerUiPattern::kNormal;
 }
 
+bool DownloadItemModel::ShouldShowInUi() const {
+  const DownloadItemModelData* data = DownloadItemModelData::Get(download_);
+  if (data) {
+    return data->should_show_in_ui_;
+  }
+  return !download_->IsTransient();
+}
+
+void DownloadItemModel::SetShouldShowInUi(bool should_show) {
+  DownloadItemModelData* data = DownloadItemModelData::GetOrCreate(download_);
+  data->should_show_in_ui_ = should_show;
+}
+
 bool DownloadItemModel::ShouldShowInBubble() const {
   // Downloads blocked by local policies should be notified, otherwise users
   // won't get any feedback that the download has failed.
@@ -1052,8 +1031,13 @@ bool DownloadItemModel::ShouldShowInBubble() const {
 
   return DownloadUIModel::ShouldShowInBubble();
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 bool DownloadItemModel::IsEphemeralWarning() const {
+  // On Android, insecure downloads display a InsecureDownloadDialog prior to
+  // the download and do not display any warning in the UI, so there is no
+  // associated warning message to hide/cancel.
+#if !BUILDFLAG(IS_ANDROID)
   switch (GetInsecureDownloadStatus()) {
     case download::DownloadItem::InsecureDownloadStatus::BLOCK:
     case download::DownloadItem::InsecureDownloadStatus::WARN:
@@ -1064,6 +1048,7 @@ bool DownloadItemModel::IsEphemeralWarning() const {
     case download::DownloadItem::InsecureDownloadStatus::SILENT_BLOCK:
       break;
   }
+#endif
 
   switch (GetDangerType()) {
     case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE:
@@ -1095,8 +1080,6 @@ bool DownloadItemModel::IsEphemeralWarning() const {
   }
 }
 
-#endif  // !BUILDFLAG(IS_ANDROID)
-
 offline_items_collection::FailState DownloadItemModel::GetLastFailState()
     const {
   return OfflineItemUtils::ConvertDownloadInterruptReasonToFailState(
@@ -1111,7 +1094,7 @@ bool DownloadItemModel::IsExtensionDownload() const {
   return download_crx_util::IsExtensionDownload(*download_);
 }
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 void DownloadItemModel::CompleteSafeBrowsingScan() {
   if (download_->IsSavePackageDownload()) {
     download_->OnAsyncScanningCompleted(
@@ -1129,6 +1112,7 @@ void DownloadItemModel::CompleteSafeBrowsingScan() {
 
 void DownloadItemModel::ReviewScanningVerdict(
     content::WebContents* web_contents) {
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
   auto command_callback =
       [](std::unique_ptr<DownloadItemModel> model,
          std::unique_ptr<DownloadCommands> download_commands,
@@ -1146,8 +1130,9 @@ void DownloadItemModel::ReviewScanningVerdict(
           command_callback, std::make_unique<DownloadItemModel>(download_),
           std::make_unique<DownloadCommands>(DownloadUIModel::GetWeakPtr()),
           DownloadCommands::DISCARD));
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 }
-#endif
+#endif  // BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 
 bool DownloadItemModel::ShouldShowDropdown() const {
   // We don't show the dropdown for dangerous file types or for files

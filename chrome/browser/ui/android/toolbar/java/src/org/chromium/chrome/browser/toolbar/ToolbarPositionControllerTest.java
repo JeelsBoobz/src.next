@@ -7,18 +7,25 @@ package org.chromium.chrome.browser.toolbar;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.FrameLayout.LayoutParams;
 
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -28,14 +35,16 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLooper;
 import org.robolectric.shadows.ShadowPackageManager;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.ResettersForTesting;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.browser_controls.BottomControlsLayer;
 import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
 import org.chromium.chrome.browser.browser_controls.BottomControlsStacker.LayerScrollBehavior;
@@ -46,9 +55,13 @@ import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.toolbar.ToolbarPositionController.BottomControlsLayerWithOffset;
+import org.chromium.chrome.browser.toolbar.ToolbarPositionController.StateTransition;
+import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.ui.KeyboardVisibilityDelegate;
-
-import java.util.Observer;
+import org.chromium.ui.base.WindowAndroid;
+import org.chromium.url.GURL;
 
 /** Unit tests for {@link ToolbarPositionController}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -59,13 +72,15 @@ public class ToolbarPositionControllerTest {
     private static final int TOOLBAR_HEIGHT = 56;
     private static final int CONTROL_CONTAINER_ID = 12356;
 
-    private BrowserControlsSizer mBrowserControlsSizer =
+    private final BrowserControlsSizer mBrowserControlsSizer =
             new BrowserControlsSizer() {
                 @ControlsPosition private int mControlsPosition = ControlsPosition.TOP;
                 private int mTopControlsHeight;
                 private int mTopControlsMinHeight;
+                private int mRendererTopControlsOffset;
                 private int mBottomControlsHeight;
                 private int mBottomControlsMinHeight;
+                private int mRendererBottomControlsOffset;
 
                 @Override
                 public void setBottomControlsHeight(
@@ -73,6 +88,9 @@ public class ToolbarPositionControllerTest {
                     mBottomControlsHeight = bottomControlsHeight;
                     mBottomControlsMinHeight = bottomControlsMinHeight;
                 }
+
+                @Override
+                public void setBottomControlsAdditionalHeight(int height) {}
 
                 @Override
                 public void setTopControlsHeight(int topControlsHeight, int topControlsMinHeight) {
@@ -89,12 +107,16 @@ public class ToolbarPositionControllerTest {
 
                 @Override
                 public void setControlsPosition(
-                        int controlsPosition,
+                        @ControlsPosition int controlsPosition,
                         int newTopControlsHeight,
                         int newTopControlsMinHeight,
+                        int newRendererTopControlsOffset,
                         int newBottomControlsHeight,
-                        int newBottomControlsMinHeight) {
+                        int newBottomControlsMinHeight,
+                        int newRendererBottomControlsOffset) {
                     mControlsPosition = controlsPosition;
+                    mRendererTopControlsOffset = newRendererTopControlsOffset;
+                    mRendererBottomControlsOffset = newRendererBottomControlsOffset;
                     setTopControlsHeight(newTopControlsHeight, newTopControlsMinHeight);
                     setBottomControlsHeight(newBottomControlsHeight, newBottomControlsMinHeight);
                 }
@@ -136,13 +158,18 @@ public class ToolbarPositionControllerTest {
                 }
 
                 @Override
+                public int getTopControlsHairlineHeight() {
+                    return 0;
+                }
+
+                @Override
                 public int getTopControlsMinHeight() {
                     return mTopControlsMinHeight;
                 }
 
                 @Override
                 public int getTopControlOffset() {
-                    return 0;
+                    return mRendererTopControlsOffset;
                 }
 
                 @Override
@@ -171,13 +198,8 @@ public class ToolbarPositionControllerTest {
                 }
 
                 @Override
-                public boolean shouldUpdateOffsetsWhenConstraintsChange() {
-                    return false;
-                }
-
-                @Override
                 public int getBottomControlOffset() {
-                    return 0;
+                    return mRendererBottomControlsOffset;
                 }
 
                 @Override
@@ -204,30 +226,48 @@ public class ToolbarPositionControllerTest {
                 public int getControlsPosition() {
                     return mControlsPosition;
                 }
+
+                @Override
+                public boolean isVisibilityForced() {
+                    return false;
+                }
             };
 
-    private CoordinatorLayout.LayoutParams mControlContainerLayoutParams =
+    private final CoordinatorLayout.LayoutParams mControlContainerLayoutParams =
             new CoordinatorLayout.LayoutParams(400, TOOLBAR_HEIGHT);
-    private CoordinatorLayout.LayoutParams mProgressBarLayoutParams =
+    private final CoordinatorLayout.LayoutParams mProgressBarLayoutParams =
             new CoordinatorLayout.LayoutParams(400, 5);
-    private FrameLayout.LayoutParams mHairlineLayoutParams = new LayoutParams(400, 5);
+    private final FrameLayout.LayoutParams mToolbarLayoutPrams = new LayoutParams(400, 80);
+    private final FrameLayout.LayoutParams mHairlineLayoutParams = new LayoutParams(400, 5);
     @Mock private ControlContainer mControlContainer;
     @Mock private View mControlContainerView;
     @Mock private View mProgressBarContainer;
+    @Mock private ViewGroup mProgressBarParent;
 
     private Context mContext;
-    private ObservableSupplierImpl<Boolean> mIsNtpShowing = new ObservableSupplierImpl<>(false);
-    private ObservableSupplierImpl<Boolean> mIsTabSwitcherShowing = new ObservableSupplierImpl<>(false);
-    private ObservableSupplierImpl<Boolean> mIsOmniboxFocused = new ObservableSupplierImpl<>(false);
-    private ObservableSupplierImpl<Boolean> mIsFindInPageShowing =
+    private final ObservableSupplierImpl<Boolean> mIsNtpShowing =
             new ObservableSupplierImpl<>(false);
-    private FormFieldFocusedSupplier mIsFormFieldFocused = new FormFieldFocusedSupplier();
+    private final ObservableSupplierImpl<Boolean> mIsTabSwitcherShowing =
+            new ObservableSupplierImpl<>(false);
+    private final ObservableSupplierImpl<Boolean> mIsOmniboxFocused =
+            new ObservableSupplierImpl<>(false);
+    private final ObservableSupplierImpl<Boolean> mIsFindInPageShowing =
+            new ObservableSupplierImpl<>(false);
+    private final FormFieldFocusedSupplier mIsFormFieldFocused = new FormFieldFocusedSupplier();
     private BottomControlsStacker mBottomControlsStacker;
     private ToolbarPositionController mController;
-    private ObservableSupplierImpl<Integer> mBottomToolbarOffsetSupplier =
+    private final ObservableSupplierImpl<Integer> mBottomToolbarOffsetSupplier =
             new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<Integer> mKeyboardAccessoryHeightSupplier =
+            new ObservableSupplierImpl<>(0);
+    private final ObservableSupplierImpl<Integer> mControlContainerTranslationSupplier =
+            new ObservableSupplierImpl<>(0);
+    private final ObservableSupplierImpl<Integer> mControlContainerHeightSupplier =
+            new ObservableSupplierImpl<>(LayoutParams.WRAP_CONTENT);
+    private HistogramWatcher mStartupExpectation;
+    private WindowAndroid mWindowAndroid;
 
-    static class FakeKeyboardVisibilityDelegate extends KeyboardVisibilityDelegate {
+    public static class FakeKeyboardVisibilityDelegate extends KeyboardVisibilityDelegate {
         private boolean mIsShowing;
 
         public void setVisibilityForTests(boolean isShowing) {
@@ -240,9 +280,8 @@ public class ToolbarPositionControllerTest {
             return mIsShowing;
         }
     }
-    ;
 
-    private FakeKeyboardVisibilityDelegate mKeyboardVisibilityDelegate =
+    private final FakeKeyboardVisibilityDelegate mKeyboardVisibilityDelegate =
             new FakeKeyboardVisibilityDelegate();
 
     @Before
@@ -251,17 +290,29 @@ public class ToolbarPositionControllerTest {
         doReturn(mControlContainerLayoutParams).when(mControlContainer).mutateLayoutParams();
         mHairlineLayoutParams.topMargin = TOOLBAR_HEIGHT;
         doReturn(mHairlineLayoutParams).when(mControlContainer).mutateHairlineLayoutParams();
+        doReturn(mToolbarLayoutPrams).when(mControlContainer).mutateToolbarLayoutParams();
         doReturn(mControlContainerView).when(mControlContainer).getView();
         doReturn(CONTROL_CONTAINER_ID).when(mControlContainerView).getId();
         doReturn(mProgressBarLayoutParams).when(mProgressBarContainer).getLayoutParams();
+        doReturn(mProgressBarParent).when(mProgressBarContainer).getParent();
         mContext = ContextUtils.getApplicationContext();
         doReturn(mContext.getResources()).when(mProgressBarContainer).getResources();
-        mBottomControlsStacker = new BottomControlsStacker(mBrowserControlsSizer);
-        mBrowserControlsSizer.setControlsPosition(ControlsPosition.TOP, TOOLBAR_HEIGHT, 0, 0, 0);
+        mWindowAndroid = new WindowAndroid(mContext, false);
+        mBottomControlsStacker =
+                new BottomControlsStacker(mBrowserControlsSizer, mContext, mWindowAndroid);
+        mBrowserControlsSizer.setControlsPosition(
+                ControlsPosition.TOP, TOOLBAR_HEIGHT, 0, 0, 0, 0, 0);
         mControlContainerLayoutParams.gravity = Gravity.START | Gravity.TOP;
-        mProgressBarLayoutParams.gravity = Gravity.TOP;
+        mProgressBarLayoutParams.gravity = Gravity.CENTER;
         mProgressBarLayoutParams.anchorGravity = Gravity.BOTTOM;
         mProgressBarLayoutParams.setAnchorId(CONTROL_CONTAINER_ID);
+
+        ResettersForTesting.register(
+                ToolbarPositionController::resetCachedToolbarConfigurationForTesting);
+        mStartupExpectation =
+                HistogramWatcher.newSingleRecordWatcher(
+                        "Android.ToolbarPosition.PositionAtStartup", ControlsPosition.TOP);
+
         mController =
                 new ToolbarPositionController(
                         mBrowserControlsSizer,
@@ -271,12 +322,39 @@ public class ToolbarPositionControllerTest {
                         mIsOmniboxFocused,
                         mIsFormFieldFocused,
                         mIsFindInPageShowing,
+                        mKeyboardAccessoryHeightSupplier,
                         mKeyboardVisibilityDelegate,
                         mControlContainer,
                         mBottomControlsStacker,
                         mBottomToolbarOffsetSupplier,
                         mProgressBarContainer,
+                        mControlContainerTranslationSupplier,
+                        mControlContainerHeightSupplier,
+                        new Handler(Looper.getMainLooper()),
                         mContext);
+    }
+
+    @After
+    public void tearDown() {
+        mWindowAndroid.destroy();
+    }
+
+    /**
+     * Simulate user changing toolbar anchor preference.
+     *
+     * @param showToolbarOnTop desired preference, or null to remove the key from settings,
+     *     simulating the "default" state.
+     */
+    void setUserToolbarAnchorPreference(Boolean showToolbarOnTop) {
+        var editor = ContextUtils.getAppSharedPreferences().edit();
+        if (showToolbarOnTop == null) {
+            editor.remove(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED);
+            ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
+        } else {
+            editor.putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, showToolbarOnTop);
+        }
+        editor.apply();
+        ShadowLooper.runUiThreadTasks();
     }
 
     @Test
@@ -308,18 +386,43 @@ public class ToolbarPositionControllerTest {
     }
 
     @Test
-    @Config(qualifiers = "sw400dp", minSdk = android.os.Build.VERSION_CODES.R)
+    @Config(qualifiers = "sw400dp", sdk = android.os.Build.VERSION_CODES.R)
     @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
     public void testIsToolbarPositionCustomizationEnabled_foldable() {
         ShadowPackageManager shadowPackageManager = Shadows.shadowOf(mContext.getPackageManager());
         shadowPackageManager.setSystemFeature(PackageManager.FEATURE_SENSOR_HINGE_ANGLE, true);
-        // Foldable check is disabled on debug builds to work around emulators reporting as
-        // foldable.
-        if (!BuildInfo.isDebugApp()) {
-            assertFalse(
-                    ToolbarPositionController.isToolbarPositionCustomizationEnabled(
-                            mContext, false));
-        }
+        assertTrue(
+                ToolbarPositionController.isToolbarPositionCustomizationEnabled(mContext, false));
+    }
+
+    @Test
+    @Config(qualifiers = "sw400dp")
+    @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
+    public void testMetrics() {
+        mStartupExpectation.assertExpected();
+        HistogramWatcher watcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecords(
+                                "Android.ToolbarPosition.PositionPrefChanged",
+                                ControlsPosition.BOTTOM,
+                                ControlsPosition.TOP)
+                        .build();
+
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
+        watcher.assertExpected();
+    }
+
+    @Test
+    @Config(qualifiers = "sw400dp")
+    @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR + ":default_to_top/false")
+    public void testDefaultBottom() {
+        assertControlsAtBottom();
+        verify(mProgressBarContainer).setLayoutParams(mProgressBarLayoutParams);
+
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
+        assertControlsAtTop();
+        verify(mProgressBarContainer, times(2)).setLayoutParams(mProgressBarLayoutParams);
     }
 
     @Test
@@ -327,16 +430,10 @@ public class ToolbarPositionControllerTest {
     @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
     public void testUpdatePositionChangesWithPref() {
         assertControlsAtTop();
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, false)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
         assertControlsAtBottom();
 
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, true)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
         assertControlsAtTop();
     }
 
@@ -344,10 +441,7 @@ public class ToolbarPositionControllerTest {
     @Config(qualifiers = "sw400dp")
     @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
     public void testUpdatePositionChangesWithNtpState() {
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, false)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
         assertControlsAtBottom();
 
         mIsNtpShowing.set(true);
@@ -361,10 +455,7 @@ public class ToolbarPositionControllerTest {
     @Config(qualifiers = "sw400dp")
     @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
     public void testUpdatePositionChangesWithTabSwitcherState() {
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, false)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
         assertControlsAtBottom();
 
         mIsTabSwitcherShowing.set(true);
@@ -378,10 +469,7 @@ public class ToolbarPositionControllerTest {
     @Config(qualifiers = "sw400dp")
     @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
     public void testUpdatePositionChangesWithOmniboxFocusState() {
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, false)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
         assertControlsAtBottom();
 
         mIsOmniboxFocused.set(true);
@@ -394,18 +482,20 @@ public class ToolbarPositionControllerTest {
     @Test
     @Config(qualifiers = "sw400dp")
     @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
+    @DisableFeatures(ChromeFeatureList.MINI_ORIGIN_BAR)
     public void testUpdatePositionChangesWithFormFieldFocusState() {
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, false)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
         assertControlsAtBottom();
+        verify(mControlContainerView).setVisibility(View.INVISIBLE);
 
         mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
         mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+        assertEquals(0, mBrowserControlsSizer.getTopControlOffset());
         assertControlsAtTop();
+        verify(mControlContainerView, times(1)).setVisibility(View.INVISIBLE);
 
         mKeyboardVisibilityDelegate.setVisibilityForTests(false);
+        assertEquals(TOOLBAR_HEIGHT, mBrowserControlsSizer.getBottomControlOffset());
         assertControlsAtBottom();
 
         mKeyboardVisibilityDelegate.setVisibilityForTests(true);
@@ -417,12 +507,21 @@ public class ToolbarPositionControllerTest {
 
     @Test
     @Config(qualifiers = "sw400dp")
+    @EnableFeatures({ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR, ChromeFeatureList.MINI_ORIGIN_BAR})
+    public void testUpdatePositionFormField_MiniOriginBar() {
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        assertControlsAtBottom();
+
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+        assertControlsAtBottom();
+    }
+
+    @Test
+    @Config(qualifiers = "sw400dp")
     @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
     public void testUpdatePositionChangesWithFindInPage() {
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, false)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
         assertControlsAtBottom();
 
         mIsFindInPageShowing.set(true);
@@ -436,79 +535,402 @@ public class ToolbarPositionControllerTest {
     @Config(qualifiers = "sw400dp")
     @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
     public void testBottomControlsStacker() {
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, false)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
         assertControlsAtBottom();
 
-        assertEquals(mBottomControlsStacker.getTotalHeight(), TOOLBAR_HEIGHT);
+        assertEquals(TOOLBAR_HEIGHT, mBottomControlsStacker.getTotalHeight());
         BottomControlsLayer toolbarLayer =
                 mBottomControlsStacker.getLayerForTesting(LayerType.BOTTOM_TOOLBAR);
-        assertEquals(toolbarLayer.getHeight(), TOOLBAR_HEIGHT);
-        assertEquals(toolbarLayer.getLayerVisibility(), LayerVisibility.VISIBLE);
-        assertEquals(toolbarLayer.getScrollBehavior(), LayerScrollBehavior.DEFAULT_SCROLL_OFF);
+        assertEquals(TOOLBAR_HEIGHT, toolbarLayer.getHeight());
+        assertEquals(LayerVisibility.VISIBLE, toolbarLayer.getLayerVisibility());
+        assertEquals(LayerScrollBehavior.DEFAULT_SCROLL_OFF, toolbarLayer.getScrollBehavior());
 
         toolbarLayer.onBrowserControlsOffsetUpdate(12);
         verify(mControlContainerView).setTranslationY(12);
-        assertEquals(mBottomToolbarOffsetSupplier.get().intValue(), 12);
+        assertEquals(12, mBottomToolbarOffsetSupplier.get().intValue());
 
         BottomControlsLayer progressBarLayer =
                 mBottomControlsStacker.getLayerForTesting(LayerType.PROGRESS_BAR);
-        assertEquals(progressBarLayer.getHeight(), 0);
-        assertEquals(progressBarLayer.getLayerVisibility(), LayerVisibility.VISIBLE);
-        assertEquals(progressBarLayer.getScrollBehavior(), LayerScrollBehavior.DEFAULT_SCROLL_OFF);
+        assertEquals(0, progressBarLayer.getHeight());
+        assertEquals(LayerVisibility.VISIBLE, progressBarLayer.getLayerVisibility());
+        assertEquals(LayerScrollBehavior.DEFAULT_SCROLL_OFF, progressBarLayer.getScrollBehavior());
 
         progressBarLayer.onBrowserControlsOffsetUpdate(-12);
         verify(mProgressBarContainer).setTranslationY(-12);
 
         mIsOmniboxFocused.set(true);
         assertControlsAtTop();
-        assertEquals(toolbarLayer.getLayerVisibility(), LayerVisibility.HIDDEN);
-        verify(mControlContainerView).setTranslationY(0);
-        assertEquals(progressBarLayer.getLayerVisibility(), LayerVisibility.HIDDEN);
-        verify(mProgressBarContainer).setTranslationY(0);
+        assertEquals(LayerVisibility.HIDDEN, toolbarLayer.getLayerVisibility());
+        verify(mControlContainerView, atLeast(1)).setTranslationY(0);
+        assertEquals(LayerVisibility.HIDDEN, progressBarLayer.getLayerVisibility());
+        verify(mProgressBarContainer, atLeast(1)).setTranslationY(0);
     }
 
     @Test
     @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
     public void testGetToolbarPositionResId() {
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, true)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
         assertEquals(
                 R.string.address_bar_settings_top,
                 ToolbarPositionController.getToolbarPositionResId());
 
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putBoolean(ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, false)
-                .commit();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
         assertEquals(
                 R.string.address_bar_settings_bottom,
                 ToolbarPositionController.getToolbarPositionResId());
     }
 
+    @Test
+    @EnableFeatures(ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR)
+    @DisableFeatures(ChromeFeatureList.MINI_ORIGIN_BAR)
+    public void testCalculateStateTransition() {
+        boolean formFieldStateChanged = false;
+        boolean prefStateChanged = false;
+        boolean ntpShowing = false;
+        boolean tabSwitcherShowing = false;
+        boolean isOmniboxFocused = false;
+        boolean isFindInPageShowing = false;
+        boolean isFormFieldFocusedWithKeyboardVisible = false;
+        boolean doesUserPreferTopToolbar = false;
+
+        assertEquals(
+                StateTransition.NONE,
+                ToolbarPositionController.calculateStateTransition(
+                        formFieldStateChanged,
+                        prefStateChanged,
+                        ntpShowing,
+                        tabSwitcherShowing,
+                        isOmniboxFocused,
+                        isFindInPageShowing,
+                        isFormFieldFocusedWithKeyboardVisible,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.BOTTOM));
+
+        assertEquals(
+                StateTransition.SNAP_TO_TOP,
+                ToolbarPositionController.calculateStateTransition(
+                        formFieldStateChanged,
+                        prefStateChanged,
+                        true,
+                        tabSwitcherShowing,
+                        isOmniboxFocused,
+                        isFindInPageShowing,
+                        isFormFieldFocusedWithKeyboardVisible,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.BOTTOM));
+
+        assertEquals(
+                StateTransition.SNAP_TO_TOP,
+                ToolbarPositionController.calculateStateTransition(
+                        formFieldStateChanged,
+                        prefStateChanged,
+                        ntpShowing,
+                        true,
+                        isOmniboxFocused,
+                        isFindInPageShowing,
+                        isFormFieldFocusedWithKeyboardVisible,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.BOTTOM));
+
+        assertEquals(
+                StateTransition.SNAP_TO_TOP,
+                ToolbarPositionController.calculateStateTransition(
+                        formFieldStateChanged,
+                        prefStateChanged,
+                        ntpShowing,
+                        true,
+                        isOmniboxFocused,
+                        isFindInPageShowing,
+                        isFormFieldFocusedWithKeyboardVisible,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.BOTTOM));
+
+        assertEquals(
+                StateTransition.SNAP_TO_TOP,
+                ToolbarPositionController.calculateStateTransition(
+                        formFieldStateChanged,
+                        prefStateChanged,
+                        ntpShowing,
+                        tabSwitcherShowing,
+                        true,
+                        isFindInPageShowing,
+                        isFormFieldFocusedWithKeyboardVisible,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.BOTTOM));
+
+        assertEquals(
+                StateTransition.SNAP_TO_TOP,
+                ToolbarPositionController.calculateStateTransition(
+                        formFieldStateChanged,
+                        prefStateChanged,
+                        ntpShowing,
+                        tabSwitcherShowing,
+                        isOmniboxFocused,
+                        true,
+                        isFormFieldFocusedWithKeyboardVisible,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.BOTTOM));
+
+        assertEquals(
+                StateTransition.SNAP_TO_TOP,
+                ToolbarPositionController.calculateStateTransition(
+                        formFieldStateChanged,
+                        prefStateChanged,
+                        ntpShowing,
+                        tabSwitcherShowing,
+                        isOmniboxFocused,
+                        isFindInPageShowing,
+                        true,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.BOTTOM));
+
+        assertEquals(
+                StateTransition.SNAP_TO_BOTTOM,
+                ToolbarPositionController.calculateStateTransition(
+                        formFieldStateChanged,
+                        prefStateChanged,
+                        ntpShowing,
+                        tabSwitcherShowing,
+                        isOmniboxFocused,
+                        isFindInPageShowing,
+                        isFormFieldFocusedWithKeyboardVisible,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.TOP));
+
+        assertEquals(
+                StateTransition.SNAP_TO_BOTTOM,
+                ToolbarPositionController.calculateStateTransition(
+                        true,
+                        prefStateChanged,
+                        ntpShowing,
+                        tabSwitcherShowing,
+                        isOmniboxFocused,
+                        isFindInPageShowing,
+                        isFormFieldFocusedWithKeyboardVisible,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.TOP));
+
+        assertEquals(
+                StateTransition.ANIMATE_TO_BOTTOM,
+                ToolbarPositionController.calculateStateTransition(
+                        formFieldStateChanged,
+                        true,
+                        ntpShowing,
+                        tabSwitcherShowing,
+                        isOmniboxFocused,
+                        isFindInPageShowing,
+                        isFormFieldFocusedWithKeyboardVisible,
+                        doesUserPreferTopToolbar,
+                        ControlsPosition.TOP));
+    }
+
+    @Test
+    public void shouldShowToolbarOnTop_withNtpUrl() {
+        Tab tab = mock(Tab.class);
+        doReturn(new GURL(UrlConstants.NTP_URL)).when(tab).getUrl();
+
+        // By default, Toolbar should be anchored on top.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ null);
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+
+        // When the user explicitly asks for bottom toolbar, NTP should still show that toolbar on
+        // top.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+
+        // ... NTP always shows toolbar on top.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+    }
+
+    @Test
+    public void shouldShowToolbarOnTop_withIncognitoNtpUrl() {
+        Tab tab = mock(Tab.class);
+        doReturn(new GURL(UrlConstants.NTP_URL)).when(tab).getUrl();
+        doReturn(true).when(tab).isIncognitoBranded();
+
+        // By default, Toolbar should be anchored on top.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ null);
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+
+        // When the user explicitly asks for bottom toolbar the incognito NTP should show toolbar on
+        // the bottom.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        assertFalse(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+
+        // ... same for the explicit top toolbar.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+    }
+
+    @Test
+    public void shouldShowToolbarOnTop_withNonNtpUrl() {
+        // This test does not instantiate ToolbarPositionController, meaning there is no Preference
+        // observer watching for settings changes.
+        Tab tab = mock(Tab.class);
+        doReturn(new GURL(UrlConstants.ABOUT_URL)).when(tab).getUrl();
+
+        // By default, Toolbar should be anchored on top.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ null);
+        ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+
+        // When the user explicitly asks for bottom toolbar, non-NTP URLs should obey.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
+        assertFalse(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+
+        // ... same if the User wants explicitly Top toolbar.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
+        ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+    }
+
+    @Test
+    public void shouldShowToolbarOnTop_edgeCases() {
+        // This test does not instantiate ToolbarPositionController, meaning there is no Preference
+        // observer watching for settings changes.
+        Tab tab = mock(Tab.class);
+
+        // By default, Toolbar should be anchored on top.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ null);
+        ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(null));
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+
+        // In the absence of relevant signals, assume regular tab.
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
+        assertFalse(ToolbarPositionController.shouldShowToolbarOnTop(null));
+        assertFalse(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
+        ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(null));
+        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+    }
+
+    @Test
+    @EnableFeatures({ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR, ChromeFeatureList.MINI_ORIGIN_BAR})
+    public void testControlContainerTranslationAdjustments() {
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+        assertControlsAtBottom();
+
+        int baseTranslation = 12;
+        BottomControlsLayerWithOffset toolbarLayer =
+                (BottomControlsLayerWithOffset)
+                        mBottomControlsStacker.getLayerForTesting(LayerType.BOTTOM_TOOLBAR);
+        toolbarLayer.onBrowserControlsOffsetUpdate(baseTranslation);
+        verify(mControlContainerView).setTranslationY(baseTranslation);
+
+        final int chinHeight = 36;
+        int keybpardAccessoryHeight = 100;
+        mBottomControlsStacker.addLayer(
+                new BottomControlsLayer() {
+                    @Override
+                    public int getType() {
+                        return LayerType.BOTTOM_CHIN;
+                    }
+
+                    @Override
+                    public int getScrollBehavior() {
+                        return LayerScrollBehavior.DEFAULT_SCROLL_OFF;
+                    }
+
+                    @Override
+                    public int getHeight() {
+                        return chinHeight;
+                    }
+
+                    @Override
+                    public int getLayerVisibility() {
+                        return LayerVisibility.VISIBLE;
+                    }
+                });
+        mBottomControlsStacker.requestLayerUpdate(false);
+        mKeyboardAccessoryHeightSupplier.set(keybpardAccessoryHeight);
+        verify(mControlContainerView)
+                .setTranslationY(baseTranslation - keybpardAccessoryHeight + chinHeight);
+        assertEquals(
+                baseTranslation - keybpardAccessoryHeight + chinHeight,
+                mBottomToolbarOffsetSupplier.get().intValue());
+
+        mKeyboardAccessoryHeightSupplier.set(0);
+        verify(mControlContainerView, times(2)).setTranslationY(baseTranslation);
+
+        mControlContainerTranslationSupplier.set(10);
+        verify(mControlContainerView).setTranslationY(baseTranslation + 10);
+        assertEquals(baseTranslation + 10, mBottomToolbarOffsetSupplier.get().intValue());
+
+        mControlContainerTranslationSupplier.set(20);
+        verify(mControlContainerView).setTranslationY(baseTranslation + 20);
+        assertEquals(baseTranslation + 20, mBottomToolbarOffsetSupplier.get().intValue());
+    }
+
+    @Test
+    @EnableFeatures({ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR, ChromeFeatureList.MINI_ORIGIN_BAR})
+    public void testParentLayoutInLayoutDuringPositionChange() {
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        assertControlsAtBottom();
+
+        doReturn(true).when(mProgressBarParent).isInLayout();
+        mIsNtpShowing.set(true);
+
+        // Progress bar params should not have changed yet; changing them mid-layout pass can cause
+        // a crash.
+        assertEquals(Gravity.BOTTOM, mProgressBarLayoutParams.gravity);
+        assertEquals(Gravity.NO_GRAVITY, mProgressBarLayoutParams.anchorGravity);
+        assertEquals(View.NO_ID, mProgressBarLayoutParams.getAnchorId());
+
+        // Run the posted task to complete changing the progress bar layout params.
+        ShadowLooper.idleMainLooper();
+        assertControlsAtTop();
+    }
+
+    @Test
+    @EnableFeatures({ChromeFeatureList.ANDROID_BOTTOM_TOOLBAR, ChromeFeatureList.MINI_ORIGIN_BAR})
+    public void testControlContainerHeightAdjustments() {
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+        assertControlsAtBottom();
+        assertEquals(TOOLBAR_HEIGHT, mBottomControlsStacker.getTotalHeight());
+
+        mControlContainerHeightSupplier.set(15);
+        assertEquals(15, mBottomControlsStacker.getTotalHeight());
+        assertEquals(15, mHairlineLayoutParams.bottomMargin);
+    }
+
+    @Test
+    public void testDestroy() {
+        mController.destroy();
+        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+        assertControlsAtTop();
+    }
+
     private void assertControlsAtBottom() {
-        assertEquals(mBrowserControlsSizer.getControlsPosition(), ControlsPosition.BOTTOM);
-        assertEquals(mBrowserControlsSizer.getTopControlsHeight(), 0);
-        assertEquals(mBrowserControlsSizer.getBottomControlsHeight(), TOOLBAR_HEIGHT);
-        assertEquals(mHairlineLayoutParams.topMargin, 0);
-        assertEquals(mControlContainerLayoutParams.gravity, Gravity.START | Gravity.BOTTOM);
-        assertEquals(mProgressBarLayoutParams.gravity, Gravity.BOTTOM);
-        assertEquals(mProgressBarLayoutParams.anchorGravity, Gravity.NO_GRAVITY);
-        assertEquals(mProgressBarLayoutParams.getAnchorId(), View.NO_ID);
+        assertEquals(ControlsPosition.BOTTOM, mBrowserControlsSizer.getControlsPosition());
+        assertEquals(0, mBrowserControlsSizer.getTopControlsHeight());
+        assertEquals(TOOLBAR_HEIGHT, mBrowserControlsSizer.getBottomControlsHeight());
+        assertEquals(TOOLBAR_HEIGHT, mHairlineLayoutParams.bottomMargin);
+        assertEquals(Gravity.START | Gravity.BOTTOM, mControlContainerLayoutParams.gravity);
+        assertEquals(1, mToolbarLayoutPrams.topMargin);
+        assertEquals(Gravity.BOTTOM, mProgressBarLayoutParams.gravity);
+        assertEquals(Gravity.NO_GRAVITY, mProgressBarLayoutParams.anchorGravity);
+        assertEquals(View.NO_ID, mProgressBarLayoutParams.getAnchorId());
     }
 
     private void assertControlsAtTop() {
-        assertEquals(mBrowserControlsSizer.getControlsPosition(), ControlsPosition.TOP);
-        assertEquals(mBrowserControlsSizer.getTopControlsHeight(), TOOLBAR_HEIGHT);
-        assertEquals(mBrowserControlsSizer.getBottomControlsHeight(), 0);
-        assertEquals(mHairlineLayoutParams.topMargin, TOOLBAR_HEIGHT);
-        assertEquals(mControlContainerLayoutParams.gravity, Gravity.START | Gravity.TOP);
-        assertEquals(mProgressBarLayoutParams.gravity, Gravity.TOP);
-        assertEquals(mProgressBarLayoutParams.anchorGravity, Gravity.BOTTOM);
-        assertEquals(mProgressBarLayoutParams.getAnchorId(), CONTROL_CONTAINER_ID);
+        assertEquals(ControlsPosition.TOP, mBrowserControlsSizer.getControlsPosition());
+        assertEquals(TOOLBAR_HEIGHT, mBrowserControlsSizer.getTopControlsHeight());
+        assertEquals(0, mBrowserControlsSizer.getBottomControlsHeight());
+        assertEquals(TOOLBAR_HEIGHT, mHairlineLayoutParams.topMargin);
+        assertEquals(0, mHairlineLayoutParams.bottomMargin);
+        assertEquals(Gravity.START | Gravity.TOP, mControlContainerLayoutParams.gravity);
+        assertEquals(Gravity.CENTER, mProgressBarLayoutParams.gravity);
+        assertEquals(Gravity.BOTTOM, mProgressBarLayoutParams.anchorGravity);
+        assertEquals(CONTROL_CONTAINER_ID, mProgressBarLayoutParams.getAnchorId());
     }
 }

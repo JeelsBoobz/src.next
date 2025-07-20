@@ -7,9 +7,10 @@
 #include <memory>
 
 #include "build/buildflag.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/prefs/browser_prefs.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -20,6 +21,9 @@
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
+#include "components/sync/base/user_selectable_type.h"
+#include "components/sync/service/sync_prefs.h"
+#include "components/sync/test/test_sync_service.h"
 #include "content/public/test/browser_task_environment.h"
 
 using signin_util::ProfileSeparationPolicyState;
@@ -123,7 +127,6 @@ TEST_F(SigninUtilTest, GetForceSigninPolicy) {
   EXPECT_FALSE(signin_util::IsForceSigninEnabled());
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 TEST_F(SigninUtilTest, IsProfileSeparationEnforcedByProfile) {
   std::unique_ptr<TestingProfile> profile = TestingProfile::Builder().Build();
   for (const auto& local_policy : all_policies) {
@@ -365,6 +368,168 @@ TEST_F(SigninUtilTest,
         << local_policy;
   }
 }
+class SigninUtilHistorySyncOptinTest : public SigninUtilTest {
+ public:
+  syncer::TestSyncService* test_sync_service() {
+    return static_cast<syncer::TestSyncService*>(
+        SyncServiceFactory::GetForProfile(profile()));
+  }
+
+  void Signin() {
+    CHECK(profile());
+    signin::IdentityManager* identity_manager =
+        IdentityManagerFactory::GetForProfile(profile());
+    CHECK(identity_manager);
+    signin::MakePrimaryAccountAvailable(identity_manager, "test@gmail.com",
+                                        signin::ConsentLevel::kSignin);
+  }
+
+  void SignInAndSetUpSyncService() {
+    Signin();
+    SyncServiceFactory::GetInstance()->SetTestingFactory(
+        profile(), base::BindRepeating([](content::BrowserContext* context)
+                                           -> std::unique_ptr<KeyedService> {
+          return std::make_unique<syncer::TestSyncService>();
+        }));
+    CHECK(test_sync_service());
+  }
+
+  void DisableAllSyncedDataTypes() {
+    test_sync_service()->GetUserSettings()->SetSelectedTypes(
+        /*sync_everything=*/false, syncer::UserSelectableTypeSet());
+  }
+};
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+TEST_F(SigninUtilHistorySyncOptinTest,
+       ShouldNotShowHistorySyncOptinScreenIfNoPrimaryAccount) {
+  ASSERT_TRUE(profile());
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile());
+  ASSERT_TRUE(identity_manager);
+  ASSERT_FALSE(
+      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+}
+
+TEST_F(SigninUtilHistorySyncOptinTest,
+       ShouldNotShowHistorySyncOptinScreenIfNoSyncService) {
+  Signin();
+  ASSERT_FALSE(test_sync_service());
+  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+}
+
+TEST_F(SigninUtilHistorySyncOptinTest,
+       ShouldNotShowHistorySyncOptinScreenIfSyncDisabled) {
+  SignInAndSetUpSyncService();
+
+  DisableAllSyncedDataTypes();
+  ASSERT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  test_sync_service()->SetAllowedByEnterprisePolicy(false);
+  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+}
+TEST_F(SigninUtilHistorySyncOptinTest,
+       ShouldNotShowHistorySyncOptinScreenIfUserIsAlreadyOptedIn) {
+  SignInAndSetUpSyncService();
+
+  DisableAllSyncedDataTypes();
+  ASSERT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kHistory, true);
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kTabs, true);
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kSavedTabGroups, true);
+
+  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+}
+
+TEST_F(SigninUtilHistorySyncOptinTest,
+       ShowHistorySyncOptinScreenIfUserNotOptedInHistory) {
+  SignInAndSetUpSyncService();
+  ASSERT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  // History off.
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kHistory, false);
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kTabs, true);
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kSavedTabGroups, true);
+  EXPECT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+}
+
+TEST_F(SigninUtilHistorySyncOptinTest,
+       ShowHistorySyncOptinScreenIfUserNotOptedInTabs) {
+  SignInAndSetUpSyncService();
+  ASSERT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  // Tabs off.
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kHistory, true);
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kTabs, false);
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kSavedTabGroups, true);
+  EXPECT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+}
+
+TEST_F(SigninUtilHistorySyncOptinTest,
+       ShowHistorySyncOptinScreenIfUserNotOptedInTabGroups) {
+  SignInAndSetUpSyncService();
+  ASSERT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  // Tab groups off.
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kHistory, true);
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kTabs, true);
+  test_sync_service()->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kSavedTabGroups, false);
+
+  EXPECT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+}
+
+class SigninUtilHistorySyncOptinForManagedSettingsTest
+    : public SigninUtilHistorySyncOptinTest,
+      public testing::WithParamInterface<syncer::UserSelectableType> {};
+
+TEST_P(SigninUtilHistorySyncOptinForManagedSettingsTest,
+       ShouldNotShowHistorySyncOptinScreenForManagedType) {
+  SignInAndSetUpSyncService();
+
+  DisableAllSyncedDataTypes();
+  ASSERT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  test_sync_service()->GetUserSettings()->SetTypeIsManagedByPolicy(
+      GetParam(), /*managed=*/true);
+
+  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+}
+
+TEST_P(SigninUtilHistorySyncOptinForManagedSettingsTest,
+       ShouldNotShowHistorySyncOptinScreenForSupervisedType) {
+  SignInAndSetUpSyncService();
+
+  DisableAllSyncedDataTypes();
+  ASSERT_TRUE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+
+  test_sync_service()->GetUserSettings()->SetTypeIsManagedByCustodian(
+      GetParam(), /*managed=*/true);
+
+  EXPECT_FALSE(signin_util::ShouldShowHistorySyncOptinScreen(*profile()));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    SigninUtilHistorySyncOptinForManagedSettingsTest,
+    testing::Values(syncer::UserSelectableType::kHistory,
+                    syncer::UserSelectableType::kTabs,
+                    syncer::UserSelectableType::kSavedTabGroups),
+    [](const auto& info) { return GetUserSelectableTypeName(info.param); });
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 TEST(SignedInStatesTest, SignedInStates) {
@@ -399,44 +564,19 @@ TEST(SignedInStatesTest, SignedInStates) {
   EXPECT_EQ(SignedInState::kSignedOut,
             signin_util::GetSignedInState(identity_manager));
 
-  // `kExplicitBrowserSigninUIOnDesktop` enabled
-  {
-    base::test::ScopedFeatureList scoped_feature_list{
-        switches::kExplicitBrowserSigninUIOnDesktop};
+  // In incognito mode, there would be no identity manager.
+  EXPECT_EQ(SignedInState::kSignedOut, signin_util::GetSignedInState(nullptr));
 
-    // Signed in.
-    info = identity_test_env.MakePrimaryAccountAvailable(
-        "test@email.com", signin::ConsentLevel::kSignin);
-    EXPECT_EQ(SignedInState::kSignedIn,
-              signin_util::GetSignedInState(identity_manager));
+  // Signed in.
+  info = identity_test_env.MakePrimaryAccountAvailable(
+      "test@email.com", signin::ConsentLevel::kSignin);
+  EXPECT_EQ(SignedInState::kSignedIn,
+            signin_util::GetSignedInState(identity_manager));
 
-    // When explicit browser signin is enabled, being signed in with an invalid
-    // refresh token is equivalent to the sign in pending state.
-    identity_test_env.SetInvalidRefreshTokenForPrimaryAccount();
-    EXPECT_EQ(SignedInState::kSignInPending,
-              signin_util::GetSignedInState(identity_manager));
-  }
-
-  // `kExplicitBrowserSigninUIOnDesktop` disabled
-  {
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndDisableFeature(
-        switches::kExplicitBrowserSigninUIOnDesktop);
-
-    // Signed in.
-    identity_test_env.ClearPrimaryAccount();
-    info = identity_test_env.MakePrimaryAccountAvailable(
-        "test@email.com", signin::ConsentLevel::kSignin);
-    EXPECT_EQ(SignedInState::kSignedIn,
-              signin_util::GetSignedInState(identity_manager));
-
-    // We expect the user to be signed in, and additional checks would be
-    // necessary to determine that the refresh token is in error.
-    identity_test_env.SetInvalidRefreshTokenForPrimaryAccount();
-    EXPECT_EQ(SignedInState::kSignedIn,
-              signin_util::GetSignedInState(identity_manager));
-  }
+  // When explicit browser signin is enabled, being signed in with an invalid
+  // refresh token is equivalent to the sign in pending state.
+  identity_test_env.SetInvalidRefreshTokenForPrimaryAccount();
+  EXPECT_EQ(SignedInState::kSignInPending,
+            signin_util::GetSignedInState(identity_manager));
 }
 #endif  // !BUILDFLAG(ENABLE_DICE_SUPPORT)
-
-#endif

@@ -9,11 +9,12 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.StrictMode;
 
-import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
@@ -21,14 +22,18 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Exposes system related information about the current device. */
+@NullMarked
 @JNINamespace("base::android")
 public class SysUtils {
     // A device reporting strictly more total memory in megabytes cannot be considered 'low-end'.
+    // Keep in sync with LOW_MEMORY_DEVICE_THRESHOLD_MB in C++.
+    // LINT.IfChange
     private static final int LOW_MEMORY_DEVICE_THRESHOLD_MB = 1024;
+    // LINT.ThenChange(//base/features.cc)
     private static final String TAG = "SysUtils";
 
-    private static Boolean sLowEndDevice;
-    private static Integer sAmountOfPhysicalMemoryKB;
+    private static @Nullable Boolean sLowEndDevice;
+    private static @Nullable Integer sAmountOfPhysicalMemoryKB;
 
     private SysUtils() {}
 
@@ -82,7 +87,6 @@ public class SysUtils {
     /**
      * @return Whether or not this device should be considered a low end device.
      */
-    @CalledByNative
     public static boolean isLowEndDevice() {
         // Do not cache in tests since command-line flags can change.
         if (sLowEndDevice == null || BuildConfig.IS_FOR_TEST) {
@@ -94,7 +98,6 @@ public class SysUtils {
     /**
      * @return amount of physical ram detected in KB, or 0 if detection failed.
      */
-    @CalledByNative
     public static int amountOfPhysicalMemoryKB() {
         if (sAmountOfPhysicalMemoryKB == null) {
             sAmountOfPhysicalMemoryKB = detectAmountOfPhysicalMemoryKB();
@@ -105,7 +108,6 @@ public class SysUtils {
     /**
      * @return Whether or not the system has low available memory.
      */
-    @CalledByNative
     public static boolean isCurrentlyLowMemory() {
         ActivityManager am =
                 (ActivityManager)
@@ -129,6 +131,8 @@ public class SysUtils {
     }
 
     private static boolean detectLowEndDevice() {
+        // Keep in sync with the native implementation of this function.
+        // LINT.IfChange
         assert CommandLine.isInitialized();
         if (CommandLine.getInstance().hasSwitch(BaseSwitches.ENABLE_LOW_END_DEVICE_MODE)) {
             return true;
@@ -147,6 +151,7 @@ public class SysUtils {
         }
 
         return isLowEnd;
+        // LINT.ThenChange(//base/system/sys_info.cc)
     }
 
     /**

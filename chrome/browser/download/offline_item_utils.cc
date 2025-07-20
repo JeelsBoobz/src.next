@@ -4,6 +4,7 @@
 
 #include "chrome/browser/download/offline_item_utils.h"
 
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
@@ -109,6 +110,7 @@ OfflineItem OfflineItemUtils::CreateOfflineItem(const std::string& name_space,
   item.is_openable = download_item->CanOpenDownload();
   item.file_path = download_item->GetTargetFilePath();
   item.mime_type = download_item->GetMimeType();
+  item.danger_type = download_item->GetDangerType();
 #if BUILDFLAG(IS_ANDROID)
   item.mime_type = DownloadUtils::RemapGenericMimeType(
       item.mime_type, download_item->GetOriginalUrl(),

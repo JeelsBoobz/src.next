@@ -59,12 +59,32 @@
 //     // This body will not be inlined into callers.
 //   }
 // ```
-#if __has_cpp_attribute(gnu::noinline)
+#if __has_cpp_attribute(clang::noinline)
+#define NOINLINE [[clang::noinline]]
+#elif __has_cpp_attribute(gnu::noinline)
 #define NOINLINE [[gnu::noinline]]
 #elif __has_cpp_attribute(msvc::noinline)
 #define NOINLINE [[msvc::noinline]]
 #else
 #define NOINLINE
+#endif
+
+// Annotates a call site indicating that the callee should not be inlined.
+//
+// See also:
+//   https://clang.llvm.org/docs/AttributeReference.html#noinline
+//
+// Usage:
+// ```
+//   void Func() {
+//      // This specific call to `DoSomething` should not be inlined.
+//      NOINLINE_CALL DoSomething();
+//   }
+// ```
+#if __has_cpp_attribute(clang::noinline)
+#define NOINLINE_CALL [[clang::noinline]]
+#else
+#define NOINLINE_CALL
 #endif
 
 // Annotates a function indicating it should not be optimized.
@@ -102,7 +122,9 @@
 // Since `ALWAYS_INLINE` is performance-oriented but can hamper debugging,
 // ignore it in debug mode.
 #if defined(NDEBUG)
-#if __has_cpp_attribute(gnu::always_inline)
+#if __has_cpp_attribute(clang::always_inline)
+#define ALWAYS_INLINE [[clang::always_inline]] inline
+#elif __has_cpp_attribute(gnu::always_inline)
 #define ALWAYS_INLINE [[gnu::always_inline]] inline
 #elif defined(COMPILER_MSVC)
 #define ALWAYS_INLINE __forceinline
@@ -110,6 +132,30 @@
 #endif
 #if !defined(ALWAYS_INLINE)
 #define ALWAYS_INLINE inline
+#endif
+
+// Annotates a call site indicating the calee should always be inlined.
+//
+// See also:
+//   https://clang.llvm.org/docs/AttributeReference.html#always-inline-force-inline
+//
+// Usage:
+// ```
+//   void Func() {
+//     // This specific call will be inlined if possible.
+//     ALWAYS_INLINE_CALL DoSomething();
+//   }
+// ```
+//
+// Since `ALWAYS_INLINE_CALL` is performance-oriented but can hamper debugging,
+// ignore it in debug mode.
+#if defined(NDEBUG)
+#if __has_cpp_attribute(clang::always_inline)
+#define ALWAYS_INLINE_CALL [[clang::always_inline]]
+#endif
+#endif
+#if !defined(ALWAYS_INLINE_CALL)
+#define ALWAYS_INLINE_CALL
 #endif
 
 // Annotates a function indicating it should never be tail called. Useful to
@@ -250,7 +296,7 @@
 //   // initialized `T`.
 //   MSAN_UNPOISON(ptr, sizeof(T));
 // ```
-#if defined(MEMORY_SANITIZER) && !BUILDFLAG(IS_NACL)
+#if defined(MEMORY_SANITIZER)
 #include <sanitizer/msan_interface.h>
 #define MSAN_UNPOISON(p, size) __msan_unpoison(p, size)
 #else
@@ -273,7 +319,7 @@
 //   // not point to an initialized `T`.
 //   MSAN_CHECK_MEM_IS_INITIALIZED(ptr, sizeof(T));
 // ```
-#if defined(MEMORY_SANITIZER) && !BUILDFLAG(IS_NACL)
+#if defined(MEMORY_SANITIZER)
 #define MSAN_CHECK_MEM_IS_INITIALIZED(p, size) \
   __msan_check_mem_is_initialized(p, size)
 #else
@@ -541,7 +587,7 @@ inline constexpr bool AnalyzerAssumeTrue(bool arg) {
 //
 // See also:
 //   https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/p1144r8.html
-//   https://clang.llvm.org/docs/LanguageExtensions.html#:~:text=__is_trivially_relocatable
+//   https://clang.llvm.org/docs/LanguageExtensions.html#:~:text=__builtin_is_cpp_trivially_relocatable
 //
 // Usage:
 // ```
@@ -549,7 +595,11 @@ inline constexpr bool AnalyzerAssumeTrue(bool arg) {
 //     // This block will only be executed if type `T` is trivially relocatable.
 //   }
 // ```
-#if HAS_BUILTIN(__is_trivially_relocatable)
+#if HAS_BUILTIN(__builtin_is_cpp_trivially_relocatable)
+#define IS_TRIVIALLY_RELOCATABLE(t) __builtin_is_cpp_trivially_relocatable(t)
+#elif HAS_BUILTIN(__is_trivially_relocatable)
+// TODO(crbug.com/416394845): This is deprecated. Remove once all toolchains
+// have __builtin_is_cpp_trivially_relocatable.
 #define IS_TRIVIALLY_RELOCATABLE(t) __is_trivially_relocatable(t)
 #else
 #define IS_TRIVIALLY_RELOCATABLE(t) false
@@ -916,8 +966,11 @@ inline constexpr bool AnalyzerAssumeTrue(bool arg) {
 // For fields, this would be used to annotate both pointer and size fields that
 // have not yet been converted to a span.
 //
-// All functions or fields annotated with this macro should come with a `#
-// Safety` comment that explains what the caller must guarantee to prevent OOB.
+// All functions or fields annotated with this macro should come with a
+// `// PRECONDITIONS: ` comment that explains what the caller must guarantee
+// to ensure safe operation. Callers can then write `// SAFETY: ` comments
+// explaining why the specific preconditions have been met.
+//
 // Ideally, unsafe functions should also be paired with a safer version, e.g.
 // one that replaces pointer parameters with `span`s; otherwise, document safer
 // replacement coding patterns callers can migrate to.

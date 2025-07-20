@@ -39,9 +39,9 @@ class ExtensionActionManagerFactory : public BrowserContextKeyedServiceFactory {
             "ExtensionActionManager",
             BrowserContextDependencyManager::GetInstance()) {}
 
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* browser_context) const override {
-    return new ExtensionActionManager(browser_context);
+    return std::make_unique<ExtensionActionManager>(browser_context);
   }
 
   content::BrowserContext* GetBrowserContextToUse(
@@ -121,8 +121,8 @@ ExtensionAction* ExtensionActionManager::GetExtensionAction(
 }
 
 // static
-void ExtensionActionManager::EnsureFactoryBuilt() {
-  ExtensionActionManagerFactory::GetInstance();
+BrowserContextKeyedServiceFactory* ExtensionActionManager::GetFactory() {
+  return ExtensionActionManagerFactory::GetInstance();
 }
 
 }  // namespace extensions

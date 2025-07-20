@@ -7,9 +7,11 @@
 
 #include <memory>
 
+#include "base/callback_list.h"
 #include "base/sequence_checker.h"
-#include "chrome/browser/browser_process_platform_part_chromeos.h"
+#include "chrome/browser/browser_process_platform_part_base.h"
 #include "chrome/browser/component_updater/cros_component_installer_chromeos.h"
+#include "chrome/browser/ui/browser_list_observer.h"
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
 
 class BrowserProcessPlatformPartTestApi;
@@ -24,6 +26,7 @@ namespace ash {
 class AccountManagerFactory;
 class AshProxyMonitor;
 class BrowserContextFlusher;
+class BrowserRestoreObserver;
 class ChromeSessionManager;
 class CrosSettingsHolder;
 class InSessionPasswordChangeManager;
@@ -46,14 +49,14 @@ class SystemClock;
 namespace policy {
 class BrowserPolicyConnectorAsh;
 class DeviceRestrictionScheduleController;
-class DeviceRestrictionScheduleControllerDelegateImpl;
 }  // namespace policy
 
 namespace user_manager {
+class MultiUserSignInPolicyController;
 class UserManager;
 }  // namespace user_manager
 
-class BrowserProcessPlatformPart : public BrowserProcessPlatformPartChromeOS {
+class BrowserProcessPlatformPart : public BrowserProcessPlatformPartBase {
  public:
   BrowserProcessPlatformPart();
 
@@ -122,6 +125,11 @@ class BrowserProcessPlatformPart : public BrowserProcessPlatformPartChromeOS {
 
   user_manager::UserManager* user_manager() { return user_manager_.get(); }
 
+  user_manager::MultiUserSignInPolicyController*
+  multi_user_sign_in_policy_controller() {
+    return multi_user_sign_in_policy_controller_.get();
+  }
+
   ash::SchedulerConfigurationManager* scheduler_configuration_manager() {
     return scheduler_configuration_manager_.get();
   }
@@ -158,25 +166,25 @@ class BrowserProcessPlatformPart : public BrowserProcessPlatformPartChromeOS {
 
   // Overridden from BrowserProcessPlatformPartBase:
   void StartTearDown() override;
-  void AttemptExit(bool try_to_quit_application) override;
 
   ash::system::SystemClock* GetSystemClock();
   void DestroySystemClock();
 
+  // DEPRECATED: Use ash::AccountManagerFactory::Get() instead.
+  // TODO(crbug.com/393260347): Remove this.
   ash::AccountManagerFactory* GetAccountManagerFactory();
 
   static void EnsureFactoryBuilt();
 
- protected:
-  // BrowserProcessPlatformPartChromeOS:
-  bool CanRestoreUrlsForProfile(const Profile* profile) const override;
-
  private:
+
   friend class BrowserProcessPlatformPartTestApi;
 
   void CreateProfileHelper();
 
   void ShutdownPrimaryProfileServices();
+
+  std::unique_ptr<ash::BrowserRestoreObserver> browser_restore_observer_;
 
   std::unique_ptr<ash::ChromeSessionManager> session_manager_;
 
@@ -198,8 +206,9 @@ class BrowserProcessPlatformPart : public BrowserProcessPlatformPartChromeOS {
 
   std::unique_ptr<ash::UserImageManagerRegistry> user_image_manager_registry_;
 
-  std::unique_ptr<policy::DeviceRestrictionScheduleControllerDelegateImpl>
-      device_restriction_schedule_controller_delegate_impl_;
+  std::unique_ptr<user_manager::MultiUserSignInPolicyController>
+      multi_user_sign_in_policy_controller_;
+
   std::unique_ptr<policy::DeviceRestrictionScheduleController>
       device_restriction_schedule_controller_;
 

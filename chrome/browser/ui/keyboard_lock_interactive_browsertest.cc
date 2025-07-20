@@ -7,6 +7,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/fullscreen_keyboard_browsertest_base.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -113,7 +114,7 @@ class KeyboardLockInteractiveBrowserTest
 #endif
 
   ExclusiveAccessManager* GetExclusiveAccessManager() {
-    return browser()->exclusive_access_manager();
+    return browser()->GetFeatures().exclusive_access_manager();
   }
 
   KeyboardLockController* GetKeyboardLockController() {
@@ -335,7 +336,7 @@ IN_PROC_BROWSER_TEST_F(KeyboardLockInteractiveBrowserTest,
 }
 
 // https://crbug.com/1108391 Flakey on ChromeOS.
-// https://crbug.com/1121172 Also flaky on Lacros and Mac
+// https://crbug.com/1121172 Also flaky on Mac
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
 #define MAYBE_SubsequentLockCallSupersedesPreviousCall \
   DISABLED_SubsequentLockCallSupersedesPreviousCall

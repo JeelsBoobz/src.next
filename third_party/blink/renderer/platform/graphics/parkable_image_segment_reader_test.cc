@@ -2,15 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
-#include "third_party/blink/renderer/platform/graphics/parkable_image.h"
-
+#include "base/compiler_specific.h"
 #include "base/test/task_environment.h"
+#include "skia/ext/skia_utils_base.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/graphics/parkable_image.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder_test_helpers.h"
 #include "third_party/blink/renderer/platform/image-decoders/segment_reader.h"
 
@@ -41,7 +37,9 @@ TEST_F(ParkableImageSegmentReaderTest, NonEmpty) {
   auto pi = ParkableImage::Create();
   ASSERT_EQ(pi->size(), 0u);  // ParkableImage is empty when created.
 
-  pi->Append(WTF::SharedBuffer::Create(g_abc, sizeof(g_abc)).get(), 0);
+  pi->Append(
+      WTF::SharedBuffer::Create(base::span_with_nul_from_cstring(g_abc)).get(),
+      0);
   ASSERT_EQ(pi->size(),
             sizeof(g_abc));  // ParkableImage is larger after Append.
 
@@ -58,7 +56,11 @@ TEST_F(ParkableImageSegmentReaderTest, Append) {
   ASSERT_EQ(pi->size(), 0u);  // ParkableImage is empty when created.
 
   const size_t shared_buffer_size = sizeof(g_123) / 2;
-  pi->Append(WTF::SharedBuffer::Create(g_123, shared_buffer_size).get(), 0);
+  pi->Append(
+      WTF::SharedBuffer::Create(
+          base::span_with_nul_from_cstring(g_123).first(shared_buffer_size))
+          .get(),
+      0);
   ASSERT_EQ(pi->size(),
             shared_buffer_size);  // ParkableImage is larger after Append.
 
@@ -66,7 +68,9 @@ TEST_F(ParkableImageSegmentReaderTest, Append) {
   // ParkableImageSegmentReader is same size as ParkableImage when created.
   EXPECT_EQ(segment_reader->size(), shared_buffer_size);
 
-  pi->Append(WTF::SharedBuffer::Create(g_123, sizeof(g_123)).get(), pi->size());
+  pi->Append(
+      WTF::SharedBuffer::Create(base::span_with_nul_from_cstring(g_123)).get(),
+      pi->size());
   ASSERT_EQ(pi->size(),
             sizeof(g_123));  // ParkableImage is larger after Append.
 
@@ -82,8 +86,8 @@ TEST_F(ParkableImageSegmentReaderTest, GetSomeData) {
   auto shared_buffer = SharedBuffer::Create();
   auto parkable_image = ParkableImage::Create(kDataSize);
   for (size_t pos = 0; pos < kDataSize; pos += 4096) {
-    shared_buffer->Append(data + pos,
-                          std::min(static_cast<size_t>(4096), kDataSize - pos));
+    shared_buffer->Append(base::span(data).subspan(
+        pos, std::min(static_cast<size_t>(4096), kDataSize - pos)));
     parkable_image->Append(shared_buffer.get(), parkable_image->size());
   }
 
@@ -113,15 +117,15 @@ TEST_F(ParkableImageSegmentReaderTest, GetAsSkData) {
   auto shared_buffer = SharedBuffer::Create();
   auto parkable_image = ParkableImage::Create(kDataSize);
   for (size_t pos = 0; pos < kDataSize; pos += 4096) {
-    shared_buffer->Append(data + pos,
-                          std::min(static_cast<size_t>(4096), kDataSize - pos));
+    shared_buffer->Append(base::span(data).subspan(
+        pos, std::min(static_cast<size_t>(4096), kDataSize - pos)));
     parkable_image->Append(shared_buffer.get(), parkable_image->size());
   }
 
   auto segment_reader = parkable_image->CreateSegmentReader();
   segment_reader->LockData();
   auto sk_data = segment_reader->GetAsSkData();
-  auto sk_data_span = base::span(sk_data->bytes(), sk_data->size());
+  auto sk_data_span = skia::as_byte_span(*sk_data);
 
   size_t position = 0;
   for (base::span<const uint8_t> segment =
@@ -144,7 +148,7 @@ TEST_F(ParkableImageSegmentReaderTest, GetAsSkDataLongLived) {
 
   auto shared_buffer = SharedBuffer::Create();
   auto parkable_image = ParkableImage::Create(kDataSize);
-  shared_buffer->Append(data, kDataSize);
+  shared_buffer->Append(base::span(data));
   parkable_image->Append(shared_buffer.get(), parkable_image->size());
 
   auto segment_reader = parkable_image->CreateSegmentReader();
@@ -154,7 +158,7 @@ TEST_F(ParkableImageSegmentReaderTest, GetAsSkDataLongLived) {
   segment_reader = nullptr;
   parkable_image = nullptr;
 
-  EXPECT_FALSE(memcmp(data, sk_data->bytes(), kDataSize));
+  UNSAFE_TODO(EXPECT_FALSE(memcmp(data, sk_data->bytes(), kDataSize)));
 }
 
 }  // namespace blink

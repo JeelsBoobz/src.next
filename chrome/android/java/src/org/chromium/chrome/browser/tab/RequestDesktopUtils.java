@@ -13,16 +13,17 @@ import android.util.DisplayMetrics;
 import android.view.Display;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.SysUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
-import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.page_info.SiteSettingsHelper;
@@ -57,10 +58,11 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.Locale;
 
 /** Utilities for requesting desktop sites support. */
+@NullMarked
 public class RequestDesktopUtils {
     private static final String SITE_WILDCARD = "*";
     // Global defaults experiment constants.
-    private static DisplayMetrics sDisplayMetrics;
+    private static @Nullable DisplayMetrics sDisplayMetrics;
 
     static final double DEFAULT_GLOBAL_SETTING_DEFAULT_ON_DISPLAY_SIZE_THRESHOLD_INCHES = 10.0;
     static final int DEFAULT_GLOBAL_SETTING_DEFAULT_ON_SMALLEST_SCREEN_WIDTH_THRESHOLD_DP = 600;
@@ -208,7 +210,7 @@ public class RequestDesktopUtils {
      */
     static boolean shouldDefaultEnableGlobalSetting(double displaySizeInInches, Context context) {
         // Desktop Android always requests desktop sites.
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             return true;
         }
 
@@ -287,12 +289,12 @@ public class RequestDesktopUtils {
         boolean isOnExternalDisplay = isOnExternalDisplay(activity);
         if (isOnExternalDisplay
                 || smallestScreenWidthDp < DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP
-                || BuildConfig.IS_DESKTOP_ANDROID) {
+                || DeviceInfo.isDesktop()) {
             return;
         }
         PrefService prefService = UserPrefs.get(profile);
         if (prefService.isDefaultValuePreference(DESKTOP_SITE_WINDOW_SETTING_ENABLED)) {
-            prefService.setBoolean(DESKTOP_SITE_WINDOW_SETTING_ENABLED, /* newValue= */ true);
+            prefService.setBoolean(DESKTOP_SITE_WINDOW_SETTING_ENABLED, /* value= */ true);
         }
     }
 
@@ -310,7 +312,7 @@ public class RequestDesktopUtils {
 
         // Desktop devices always request desktop sites so there's no need to show a message to
         // the user.
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             return false;
         }
 
@@ -386,7 +388,7 @@ public class RequestDesktopUtils {
      * Determine whether RDS window setting should be applied. When returning 'true' the mobile user
      * agent should be used for the current window size.
      */
-    static boolean shouldApplyWindowSetting(Profile profile, GURL url, Context context) {
+    static boolean shouldApplyWindowSetting(Profile profile, @Nullable GURL url, Context context) {
         // Skip window setting on Automotive and revisit if / when they add split screen.
         if (BuildInfo.getInstance().isAutomotive) {
             return false;

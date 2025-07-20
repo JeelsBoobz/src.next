@@ -45,7 +45,12 @@ enum class AdaptiveToolbarButtonVariant {
   kPageSummary = 13,
   // Discounts action.
   kDiscounts = 14,
-  kMaxValue = kDiscounts,
+  // Open In Browser action.
+  kOpenInBrowser = 15,
+  // Tab grouping action.
+  kTabGrouping = 16,
+
+  kMaxValue = kTabGrouping,
 };
 // LINT.ThenChange(/tools/metrics/histograms/enums.xml:AdaptiveToolbarButtonVariant)
 

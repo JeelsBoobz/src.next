@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/strings/pattern.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -32,7 +33,7 @@ bool WasFrameWithScriptLoaded(content::RenderFrameHost* render_frame_host) {
 
 class ExtensionCSPBypassTest : public ExtensionBrowserTest {
  public:
-  ExtensionCSPBypassTest() {}
+  ExtensionCSPBypassTest() = default;
 
   ExtensionCSPBypassTest(const ExtensionCSPBypassTest&) = delete;
   ExtensionCSPBypassTest& operator=(const ExtensionCSPBypassTest&) = delete;

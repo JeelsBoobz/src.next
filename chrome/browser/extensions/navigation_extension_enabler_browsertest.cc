@@ -9,9 +9,9 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -21,11 +21,17 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
+
+#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
+#include "content/public/common/url_constants.h"
+#endif  // !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
 
 namespace extensions {
 
@@ -47,6 +53,12 @@ class DisableExtensionBrowserTest : public ExtensionBrowserTest {
     prefs_ = ExtensionPrefs::Get(profile());
   }
 
+  void TearDownOnMainThread() override {
+    prefs_ = nullptr;
+    registry_ = nullptr;
+    ExtensionBrowserTest::TearDownOnMainThread();
+  }
+
   // We always navigate in a new tab because when we disable the extension, it
   // closes all tabs for that extension. If we only opened in the current tab,
   // this would result in the only open tab being closed, and the test
@@ -60,8 +72,8 @@ class DisableExtensionBrowserTest : public ExtensionBrowserTest {
   scoped_refptr<const Extension> extension_;
   ExtensionId extension_id_;
   GURL extension_resource_url_;
-  raw_ptr<ExtensionRegistry, DanglingUntriaged> registry_;
-  raw_ptr<ExtensionPrefs, DanglingUntriaged> prefs_;
+  raw_ptr<ExtensionRegistry> registry_;
+  raw_ptr<ExtensionPrefs> prefs_;
 };
 
 // Test that visiting an url associated with a disabled extension offers to
@@ -70,12 +82,13 @@ IN_PROC_BROWSER_TEST_F(
     DisableExtensionBrowserTest,
     PromptToReEnableExtensionsOnNavigation_PermissionsIncrease) {
   // Disable the extension due to a permissions increase.
-  extension_service()->DisableExtension(
-      extension_id_, disable_reason::DISABLE_PERMISSIONS_INCREASE);
+  extension_registrar()->DisableExtension(
+      extension_id_, {disable_reason::DISABLE_PERMISSIONS_INCREASE});
   EXPECT_TRUE(registry_->disabled_extensions().Contains(extension_id_));
 
-  EXPECT_EQ(disable_reason::DISABLE_PERMISSIONS_INCREASE,
-            prefs_->GetDisableReasons(extension_id_));
+  EXPECT_THAT(prefs_->GetDisableReasons(extension_id_),
+              testing::UnorderedElementsAre(
+                  disable_reason::DISABLE_PERMISSIONS_INCREASE));
 
   {
     // Visit an associated url and deny the prompt. The extension should remain
@@ -84,8 +97,9 @@ IN_PROC_BROWSER_TEST_F(
     NavigateToUrlInNewTab(extension_resource_url_);
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(registry_->disabled_extensions().Contains(extension_id_));
-    EXPECT_EQ(disable_reason::DISABLE_PERMISSIONS_INCREASE,
-              prefs_->GetDisableReasons(extension_id_));
+    EXPECT_THAT(prefs_->GetDisableReasons(extension_id_),
+                testing::UnorderedElementsAre(
+                    disable_reason::DISABLE_PERMISSIONS_INCREASE));
   }
 
   {
@@ -96,8 +110,7 @@ IN_PROC_BROWSER_TEST_F(
     NavigateToUrlInNewTab(extension_resource_url_);
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(registry_->enabled_extensions().Contains(extension_id_));
-    EXPECT_EQ(disable_reason::DISABLE_NONE,
-              prefs_->GetDisableReasons(extension_id_));
+    EXPECT_TRUE(prefs_->GetDisableReasons(extension_id_).empty());
   }
 }
 
@@ -106,11 +119,12 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
                        PromptToReEnableExtensionsOnNavigation_UserAction) {
   // Disable the extension for something other than a permissions increase.
-  extension_service()->DisableExtension(extension_id_,
-                                        disable_reason::DISABLE_USER_ACTION);
+  extension_registrar()->DisableExtension(
+      extension_id_, {disable_reason::DISABLE_USER_ACTION});
   EXPECT_TRUE(registry_->disabled_extensions().Contains(extension_id_));
-  EXPECT_EQ(disable_reason::DISABLE_USER_ACTION,
-            prefs_->GetDisableReasons(extension_id_));
+  EXPECT_THAT(
+      prefs_->GetDisableReasons(extension_id_),
+      testing::UnorderedElementsAre(disable_reason::DISABLE_USER_ACTION));
 
   {
     // We only prompt for permissions increases, not any other disable reason.
@@ -120,8 +134,9 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
     NavigateToUrlInNewTab(extension_resource_url_);
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(registry_->disabled_extensions().Contains(extension_id_));
-    EXPECT_EQ(disable_reason::DISABLE_USER_ACTION,
-              prefs_->GetDisableReasons(extension_id_));
+    EXPECT_THAT(
+        prefs_->GetDisableReasons(extension_id_),
+        testing::UnorderedElementsAre(disable_reason::DISABLE_USER_ACTION));
   }
 }
 
@@ -138,11 +153,12 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
   EXPECT_EQ(hosted_app, registry_->enabled_extensions().GetExtensionOrAppByURL(
                             kHostedAppUrl));
 
-  extension_service()->DisableExtension(
-      kHostedAppId, disable_reason::DISABLE_PERMISSIONS_INCREASE);
+  extension_registrar()->DisableExtension(
+      kHostedAppId, {disable_reason::DISABLE_PERMISSIONS_INCREASE});
   EXPECT_TRUE(registry_->disabled_extensions().Contains(kHostedAppId));
-  EXPECT_EQ(disable_reason::DISABLE_PERMISSIONS_INCREASE,
-            prefs_->GetDisableReasons(kHostedAppId));
+  EXPECT_THAT(prefs_->GetDisableReasons(kHostedAppId),
+              testing::UnorderedElementsAre(
+                  disable_reason::DISABLE_PERMISSIONS_INCREASE));
 
   {
     // When visiting a site that's associated with a hosted app, but not a
@@ -154,8 +170,9 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
     NavigateToUrlInNewTab(kHostedAppUrl);
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(registry_->disabled_extensions().Contains(kHostedAppId));
-    EXPECT_EQ(disable_reason::DISABLE_PERMISSIONS_INCREASE,
-              prefs_->GetDisableReasons(kHostedAppId));
+    EXPECT_THAT(prefs_->GetDisableReasons(kHostedAppId),
+                testing::UnorderedElementsAre(
+                    disable_reason::DISABLE_PERMISSIONS_INCREASE));
   }
 }
 
@@ -199,8 +216,8 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
   EXPECT_TRUE(subframe->GetProcess()->IsProcessLockedToSiteForTesting());
 
   // Disable the extension.
-  extension_service()->DisableExtension(extension->id(),
-                                        disable_reason::DISABLE_USER_ACTION);
+  extension_registrar()->DisableExtension(
+      extension->id(), {disable_reason::DISABLE_USER_ACTION});
   EXPECT_TRUE(registry_->disabled_extensions().Contains(extension->id()));
 
   // Go back and then forward.  This should go back to the original URL in the
@@ -243,7 +260,7 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
 #endif  // !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
 
   // Re-enable the extension.
-  extension_service()->EnableExtension(extension->id());
+  extension_registrar()->EnableExtension(extension->id());
   EXPECT_TRUE(registry_->enabled_extensions().Contains(extension->id()));
 
   // Navigate the subframe to the extension URL again.  This shouldn't

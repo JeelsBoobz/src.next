@@ -4,6 +4,8 @@
 
 package org.chromium.content.browser;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -20,6 +22,8 @@ import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.StrictModeContext;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content.R;
 import org.chromium.content_public.browser.TracingControllerAndroid;
 import org.chromium.ui.widget.Toast;
@@ -50,6 +54,7 @@ import java.util.TimeZone;
  */
 @JNINamespace("content")
 @SuppressWarnings("InlineFormatString")
+@NullMarked
 public class TracingControllerAndroidImpl implements TracingControllerAndroid {
     private static final String TAG = "TracingController";
 
@@ -75,7 +80,7 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
     // showing the toast impacts performance.  This gives us the chance to disable them.
     private boolean mShowToasts = true;
 
-    private String mFilename;
+    private @Nullable String mFilename;
     private boolean mCompressFile;
     private boolean mUseProtobuf;
 
@@ -112,7 +117,7 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
     }
 
     @Override
-    public String getOutputPath() {
+    public @Nullable String getOutputPath() {
         return mFilename;
     }
 
@@ -121,7 +126,7 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
      * @param basename The basename to be used, if empty a unique one will be generated.
      */
     @CalledByNative
-    private static String generateTracingFilePath(String basename) {
+    private static @Nullable String generateTracingFilePath(String basename) {
         try (StrictModeContext ignored = StrictModeContext.allowDiskWrites()) {
             String state = Environment.getExternalStorageState();
             if (!Environment.MEDIA_MOUNTED.equals(state)) {
@@ -163,14 +168,13 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
 
     private void initializeNativeControllerIfNeeded() {
         if (mNativeTracingControllerAndroid == 0) {
-            mNativeTracingControllerAndroid =
-                    TracingControllerAndroidImplJni.get().init(TracingControllerAndroidImpl.this);
+            mNativeTracingControllerAndroid = TracingControllerAndroidImplJni.get().init(this);
         }
     }
 
     @Override
     public boolean startTracing(
-            String filename,
+            @Nullable String filename,
             boolean showToasts,
             String categories,
             String traceOptions,
@@ -196,11 +200,7 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
         initializeNativeControllerIfNeeded();
         if (!TracingControllerAndroidImplJni.get()
                 .startTracing(
-                        mNativeTracingControllerAndroid,
-                        TracingControllerAndroidImpl.this,
-                        categories,
-                        traceOptions,
-                        useProtobuf)) {
+                        mNativeTracingControllerAndroid, categories, traceOptions, useProtobuf)) {
             logAndToastError(mContext.getString(R.string.profiler_error_toast));
             return false;
         }
@@ -215,12 +215,11 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
     }
 
     @Override
-    public void stopTracing(Callback<Void> callback) {
+    public void stopTracing(@Nullable Callback<Void> callback) {
         if (isTracing()) {
             TracingControllerAndroidImplJni.get()
                     .stopTracing(
                             mNativeTracingControllerAndroid,
-                            TracingControllerAndroidImpl.this,
                             mFilename,
                             mCompressFile,
                             mUseProtobuf,
@@ -237,6 +236,7 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
             Log.e(TAG, "Received onTracingStopped, but we aren't tracing");
             return;
         }
+        assumeNonNull(mFilename);
 
         logForProfiler(String.format(PROFILER_FINISHED_FMT, mFilename));
         showToast(mContext.getString(R.string.profiler_stopped_toast, mFilename));
@@ -244,7 +244,7 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
         mFilename = null;
         mCompressFile = false;
 
-        if (callback != null) ((Callback<Void>) callback).onResult(null);
+        if (callback != null) ((Callback<@Nullable Void>) callback).onResult(null);
     }
 
     /** Get known categories and log them for the profiler. */
@@ -255,14 +255,11 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
     }
 
     @Override
-    public boolean getKnownCategories(Callback<String[]> callback) {
+    public boolean getKnownCategories(@Nullable Callback<String[]> callback) {
         // Lazy initialize the native side, to allow construction before the library is loaded.
         initializeNativeControllerIfNeeded();
         return TracingControllerAndroidImplJni.get()
-                .getKnownCategoriesAsync(
-                        mNativeTracingControllerAndroid,
-                        TracingControllerAndroidImpl.this,
-                        callback);
+                .getKnownCategoriesAsync(mNativeTracingControllerAndroid, callback);
     }
 
     /**
@@ -286,10 +283,7 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
         // Lazy initialize the native side, to allow construction before the library is loaded.
         initializeNativeControllerIfNeeded();
         return TracingControllerAndroidImplJni.get()
-                .getTraceBufferUsageAsync(
-                        mNativeTracingControllerAndroid,
-                        TracingControllerAndroidImpl.this,
-                        callback);
+                .getTraceBufferUsageAsync(mNativeTracingControllerAndroid, callback);
     }
 
     @CalledByNative
@@ -303,8 +297,7 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
     @Override
     public void destroy() {
         if (mNativeTracingControllerAndroid != 0) {
-            TracingControllerAndroidImplJni.get()
-                    .destroy(mNativeTracingControllerAndroid, TracingControllerAndroidImpl.this);
+            TracingControllerAndroidImplJni.get().destroy(mNativeTracingControllerAndroid);
             mNativeTracingControllerAndroid = 0;
         }
     }
@@ -336,19 +329,16 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
     class TracingBroadcastReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (intent.getAction().endsWith(ACTION_START)) {
+            String action = assumeNonNull(intent.getAction());
+            if (action.endsWith(ACTION_START)) {
                 String categories = intent.getStringExtra(CATEGORIES_EXTRA);
                 if (TextUtils.isEmpty(categories)) {
-                    categories =
-                            TracingControllerAndroidImplJni.get()
-                                    .getDefaultCategories(TracingControllerAndroidImpl.this);
+                    categories = TracingControllerAndroidImplJni.get().getDefaultCategories();
                 } else {
                     categories =
                             categories.replaceFirst(
                                     DEFAULT_CHROME_CATEGORIES_PLACE_HOLDER,
-                                    TracingControllerAndroidImplJni.get()
-                                            .getDefaultCategories(
-                                                    TracingControllerAndroidImpl.this));
+                                    TracingControllerAndroidImplJni.get().getDefaultCategories());
                 }
                 String traceOptions =
                         intent.getStringExtra(RECORD_CONTINUOUSLY_EXTRA) == null
@@ -366,9 +356,9 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
                 } else {
                     startTracing(true, categories, traceOptions);
                 }
-            } else if (intent.getAction().endsWith(ACTION_STOP)) {
+            } else if (action.endsWith(ACTION_STOP)) {
                 stopTracing(null);
-            } else if (intent.getAction().endsWith(ACTION_LIST_CATEGORIES)) {
+            } else if (action.endsWith(ACTION_LIST_CATEGORIES)) {
                 getKnownCategories();
             } else {
                 Log.e(TAG, "Unexpected intent: %s", intent);
@@ -380,35 +370,29 @@ public class TracingControllerAndroidImpl implements TracingControllerAndroid {
 
     @NativeMethods
     interface Natives {
-        long init(TracingControllerAndroidImpl caller);
+        long init(TracingControllerAndroidImpl self);
 
-        void destroy(long nativeTracingControllerAndroid, TracingControllerAndroidImpl caller);
+        void destroy(long nativeTracingControllerAndroid);
 
         boolean startTracing(
                 long nativeTracingControllerAndroid,
-                TracingControllerAndroidImpl caller,
                 String categories,
                 String traceOptions,
                 boolean useProtobuf);
 
         void stopTracing(
                 long nativeTracingControllerAndroid,
-                TracingControllerAndroidImpl caller,
-                String filename,
+                @Nullable String filename,
                 boolean compressFile,
                 boolean useProtobuf,
-                Callback<Void> callback);
+                @Nullable Callback<Void> callback);
 
         boolean getKnownCategoriesAsync(
-                long nativeTracingControllerAndroid,
-                TracingControllerAndroidImpl caller,
-                Callback<String[]> callback);
+                long nativeTracingControllerAndroid, @Nullable Callback<String[]> callback);
 
-        String getDefaultCategories(TracingControllerAndroidImpl caller);
+        String getDefaultCategories();
 
         boolean getTraceBufferUsageAsync(
-                long nativeTracingControllerAndroid,
-                TracingControllerAndroidImpl caller,
-                Callback<Pair<Float, Long>> callback);
+                long nativeTracingControllerAndroid, Callback<Pair<Float, Long>> callback);
     }
 }

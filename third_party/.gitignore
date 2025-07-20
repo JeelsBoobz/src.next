@@ -44,6 +44,7 @@
 /data_sharing_sdk
 /devserver
 /directxsdk
+/dragonbox/src
 /edk2
 /elfutils/src
 /espresso/lib/
@@ -79,6 +80,7 @@
 /libgifcodec
 /libjingle/source
 /libupnp
+/libva-fake-driver/src
 /llvm
 /llvm-allocated-type
 /llvm-bootstrap
@@ -117,6 +119,7 @@
 /qemu-linux-arm64
 /qemu-linux-x64
 /qemu-mac-x64
+/readability
 /rust-src
 /rust-toolchain-intermediate
 /rust-toolchain/
@@ -151,6 +154,7 @@
 /vulkan-tools/src
 /vulkan-utility-libraries/src
 /vulkan-validation-layers/src
+/wasm_tts_engine/src
 /webdriver/python/selenium
 /webgl
 /webpagereplay

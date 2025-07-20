@@ -17,11 +17,17 @@
 #include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "extensions/buildflags/buildflags.h"
 #include "third_party/blink/public/mojom/context_menu/context_menu.mojom.h"
 #include "ui/android/view_android.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+#include "chrome/browser/extensions/extension_menu_delegate_android.h"
+#include "ui/menus/simple_menu_model.h"
+#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/android/chrome_jni_headers/ContextMenuHelper_jni.h"
@@ -40,6 +46,9 @@ ContextMenuHelper::ContextMenuHelper(content::WebContents* web_contents)
 }
 
 ContextMenuHelper::~ContextMenuHelper() {
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+  extension_delegate_.reset();
+#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_ContextMenuHelper_destroy(env, java_obj_);
 }
@@ -50,10 +59,24 @@ void ContextMenuHelper::ShowContextMenu(
   JNIEnv* env = base::android::AttachCurrentThread();
   context_menu_params_ = params;
   gfx::NativeView view = GetWebContents().GetNativeView();
+
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+  // Reset any previous delegate, in case a new menu is shown
+  // before the old one was gracefully closed.
+  extension_delegate_.reset();
+  extension_delegate_ = std::make_unique<extensions::ExtensionMenuDelegate>(
+      render_frame_host, params);
+  extension_delegate_->PopulateModel();
+  ui::MenuModel* model_ptr = extension_delegate_->GetModel();
+#else
+  ui::MenuModel* model_ptr = nullptr;
+#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+
   Java_ContextMenuHelper_showContextMenu(
       env, java_obj_,
       context_menu::BuildJavaContextMenuParams(
-          context_menu_params_, render_frame_host.GetProcess()->GetID(),
+          context_menu_params_, model_ptr,
+          render_frame_host.GetProcess()->GetDeprecatedID(),
           render_frame_host.GetFrameToken().value()),
       render_frame_host.GetJavaRenderFrameHost(), view->GetContainerView(),
       view->content_offset() * view->GetDipScale());
@@ -64,10 +87,9 @@ void ContextMenuHelper::DismissContextMenu() {
   Java_ContextMenuHelper_dismissContextMenu(env, java_obj_);
 }
 
-void ContextMenuHelper::OnContextMenuClosed(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj) {
-  GetWebContents().NotifyContextMenuClosed(context_menu_params_.link_followed);
+void ContextMenuHelper::OnContextMenuClosed(JNIEnv* env) {
+  GetWebContents().NotifyContextMenuClosed(context_menu_params_.link_followed,
+                                           context_menu_params_.impression);
 }
 
 void ContextMenuHelper::SetPopulatorFactory(

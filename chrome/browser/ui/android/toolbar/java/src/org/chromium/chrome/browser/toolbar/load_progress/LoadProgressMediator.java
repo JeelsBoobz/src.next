@@ -4,10 +4,12 @@
 
 package org.chromium.chrome.browser.toolbar.load_progress;
 
-import androidx.annotation.NonNull;
+import static org.chromium.build.NullUtil.assumeNonNull;
 
 import org.chromium.base.MathUtils;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.CurrentTabObserver;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
@@ -21,6 +23,7 @@ import org.chromium.ui.modelutil.PropertyModel;
  * Mediator for the load progress bar. Listens for changes to the loading state of the current tab
  * and adjusts its property model accordingly.
  */
+@NullMarked
 public class LoadProgressMediator {
     static final float MINIMUM_LOAD_PROGRESS = 0.05f;
 
@@ -34,7 +37,7 @@ public class LoadProgressMediator {
      * @param model MVC property model instance used for load progress bar.
      */
     public LoadProgressMediator(
-            @NonNull ObservableSupplier<Tab> tabSupplier, @NonNull PropertyModel model) {
+            ObservableSupplier<@Nullable Tab> tabSupplier, PropertyModel model) {
         mModel = model;
         mLoadProgressSimulator = new LoadProgressSimulator(model);
         mTabObserver =
@@ -82,7 +85,8 @@ public class LoadProgressMediator {
                                                 tab.getUrl(),
                                                 tab.isIncognito(),
                                                 tab.isNativePage()
-                                                        && tab.getNativePage().isPdf())) {
+                                                        && assumeNonNull(tab.getNativePage())
+                                                                .isPdf())) {
                                     return;
                                 }
 
@@ -125,7 +129,7 @@ public class LoadProgressMediator {
         mPreventUpdates = preventUpdates;
     }
 
-    private void onNewTabObserved(Tab tab) {
+    private void onNewTabObserved(@Nullable Tab tab) {
         if (tab == null) {
             return;
         }
@@ -134,7 +138,7 @@ public class LoadProgressMediator {
             if (NativePage.isNativePageUrl(
                     tab.getUrl(),
                     tab.isIncognito(),
-                    tab.isNativePage() && tab.getNativePage().isPdf())) {
+                    tab.isNativePage() && assumeNonNull(tab.getNativePage()).isPdf())) {
                 finishLoadProgress(false);
             } else {
                 startLoadProgress();

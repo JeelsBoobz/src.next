@@ -7,9 +7,8 @@ package org.chromium.chrome.browser.omnibox;
 import android.view.View;
 import android.view.ViewGroup;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsDropdownScrollListener;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsVisualState;
 import org.chromium.chrome.browser.omnibox.voice.VoiceRecognitionHandler;
@@ -18,6 +17,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import java.util.Optional;
 
 /** Container that holds the {@link UrlBar} and SSL state related with the current {@link Tab}. */
+@NullMarked
 public interface LocationBar {
     /** Handle all necessary tasks that can be delayed until initialization completes. */
     default void onDeferredStartup() {}
@@ -57,14 +57,6 @@ public interface LocationBar {
      */
     void clearUrlBarCursorWithoutFocusAnimations();
 
-    /**
-     * Request to unfocus url bar on back gesture or when OS back button is pressed.
-     *
-     * @return True if url bar is unfocused. False if url bar has already been unfocused when back
-     *     is pressed.
-     */
-    boolean unfocusUrlBarOnBackPressed();
-
     /** Selects all of the editable text in the {@link UrlBar}. */
     void selectAll();
 
@@ -96,8 +88,7 @@ public interface LocationBar {
      *
      * <p>TODO(crbug.com/40153747): Inject OmniboxStub where needed and remove this method.
      */
-    @Nullable
-    OmniboxStub getOmniboxStub();
+    @Nullable OmniboxStub getOmniboxStub();
 
     /** Returns the UrlBarData currently in use by the URL bar inside this location bar. */
     UrlBarData getUrlBarData();
@@ -110,8 +101,39 @@ public interface LocationBar {
     default void removeOmniboxSuggestionsDropdownScrollListener(
             OmniboxSuggestionsDropdownScrollListener listener) {}
 
-    @NonNull
     Optional<OmniboxSuggestionsVisualState> getOmniboxSuggestionsVisualState();
+
+    /**
+     * Toggle showing only the origin portion of the URL (as opposed to the default behavior of
+     * showing the max amount of the url, prioritizing the origin)
+     */
+    default void setShowOriginOnly(boolean showOriginOnly) {}
+
+    /** Toggle the url bar's text size to be small or normal sized. */
+    default void setUrlBarUsesSmallText(boolean useSmallText) {}
+
+    /**
+     * Toggle whether the status icon should be hidden for secure origins. This should only be used
+     * in minimized/reduced presentations of the LocationBar since the status icon has affordances
+     * for page-specific permissions, privacy, etc.
+     */
+    default void setHideStatusIconForSecureOrigins(boolean hideStatusIconForSecureOrigins) {}
+
+    /** Gets the height of the url bar view contained by the location bar. */
+    default float getUrlBarHeight() {
+        return 0;
+    }
+
+    /**
+     * Called whenever the NTP could have been entered or exited (e.g. tab content changed, tab
+     * navigated to from the tab strip/tab switcher, etc.). If the user is on a tablet and indeed
+     * entered or exited from the NTP, we will check the following cases: 1. If a11y is enabled, we
+     * will request a11y focus on the omnibox (e.g. for TalkBack) on the NTP. 2. If a keyboard is
+     * plugged in, we will show the URL bar cursor (without focus animations) on entering the NTP.
+     * 3. If a keyboard is plugged in, we will clear focus established in #2 above on exiting from
+     * the NTP.
+     */
+    default void maybeShowOrClearCursorInLocationBar() {}
 
     /** Destroys the LocationBar. */
     void destroy();

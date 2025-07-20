@@ -17,6 +17,7 @@
 #include "base/containers/span.h"
 #include "base/lazy_instance.h"
 #include "base/memory/raw_ptr_exclusion.h"
+#include "base/no_destructor.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -30,6 +31,17 @@ using std::string;
 
 namespace net {
 
+namespace {
+
+// Overrides the mime type for "get a mime type" functions below, for test
+// purposes. (Empty string by default, indicates no override.)
+std::string& GetOverridingMimeType() {
+  static base::NoDestructor<std::string> overriding_mime_type;
+  return *overriding_mime_type;
+}
+
+}  // namespace
+
 // Singleton utility class for mime types.
 class MimeUtil : public PlatformMimeUtil {
  public:
@@ -42,12 +54,16 @@ class MimeUtil : public PlatformMimeUtil {
   bool GetWellKnownMimeTypeFromExtension(const base::FilePath::StringType& ext,
                                          std::string* mime_type) const;
 
+  bool GetWellKnownMimeTypeFromFile(const base::FilePath& file_path,
+                                    std::string* mime_type) const;
+
   bool GetPreferredExtensionForMimeType(
       std::string_view mime_type,
       base::FilePath::StringType* extension) const;
 
   bool MatchesMimeType(std::string_view mime_type_pattern,
-                       std::string_view mime_type) const;
+                       std::string_view mime_type,
+                       bool validate_mime_type) const;
 
   bool ParseMimeTypeWithoutParameter(std::string_view type_string,
                                      std::string* top_level_type,
@@ -314,12 +330,27 @@ bool MimeUtil::GetMimeTypeFromFile(const base::FilePath& file_path,
   return GetMimeTypeFromExtension(file_name_str.substr(1), result);
 }
 
+bool MimeUtil::GetWellKnownMimeTypeFromFile(const base::FilePath& file_path,
+                                            string* result) const {
+  base::FilePath::StringType file_name_str = file_path.Extension();
+  if (file_name_str.empty()) {
+    return false;
+  }
+  return GetWellKnownMimeTypeFromExtension(file_name_str.substr(1), result);
+}
+
 bool MimeUtil::GetMimeTypeFromExtensionHelper(
     const base::FilePath::StringType& ext,
     bool include_platform_types,
     string* result) const {
   DCHECK(ext.empty() || ext[0] != '.')
       << "extension passed in must not include leading dot";
+
+  // Used for tests.
+  if (!GetOverridingMimeType().empty()) {
+    *result = GetOverridingMimeType();
+    return true;
+  }
 
   // Avoids crash when unable to handle a long file path. See crbug.com/48733.
   const unsigned kMaxFilePathSize = 65536;
@@ -413,16 +444,18 @@ bool MatchesMimeTypeParameters(std::string_view mime_type_pattern,
   return true;
 }
 
-// This comparison handles absolute maching and also basic
+// This comparison handles absolute matching and also basic
 // wildcards.  The plugin mime types could be:
 //      application/x-foo
 //      application/*
 //      application/*+xml
 //      *
+//      *+suffix
 // Also tests mime parameters -- all parameters in the pattern must be present
 // in the tested type for a match to succeed.
 bool MimeUtil::MatchesMimeType(std::string_view mime_type_pattern,
-                               std::string_view mime_type) const {
+                               std::string_view mime_type,
+                               bool validate_mime_type) const {
   if (mime_type_pattern.empty())
     return false;
 
@@ -430,6 +463,15 @@ bool MimeUtil::MatchesMimeType(std::string_view mime_type_pattern,
   const std::string_view base_pattern = mime_type_pattern.substr(0, semicolon);
   semicolon = mime_type.find(';');
   const std::string_view base_type = mime_type.substr(0, semicolon);
+
+  // If validation is enabled and pattern contains wildcards, validate that
+  // the MIME type being matched has exactly one slash in the type/subtype
+  // portion.
+  if (validate_mime_type && base_pattern.find('*') != std::string::npos) {
+    if (std::ranges::count(base_type, '/') != 1u) {
+      return false;
+    }
+  }
 
   if (base_pattern == "*" || base_pattern == "*/*")
     return MatchesMimeTypeParameters(mime_type_pattern, mime_type);
@@ -505,8 +547,8 @@ bool ParseMimeType(std::string_view type_str,
     if (offset == std::string::npos || type_str[offset] == ';')
       continue;
 
-    auto param_name = base::MakeStringPiece(type_str.begin() + param_name_start,
-                                            type_str.begin() + offset);
+    auto param_name =
+        type_str.substr(param_name_start, offset - param_name_start);
 
     // Now parse the value.
     DCHECK_EQ('=', type_str[offset]);
@@ -630,6 +672,11 @@ bool GetWellKnownMimeTypeFromExtension(const base::FilePath::StringType& ext,
   return g_mime_util.Get().GetWellKnownMimeTypeFromExtension(ext, mime_type);
 }
 
+bool GetWellKnownMimeTypeFromFile(const base::FilePath& file_path,
+                                  std::string* mime_type) {
+  return g_mime_util.Get().GetWellKnownMimeTypeFromFile(file_path, mime_type);
+}
+
 bool GetPreferredExtensionForMimeType(std::string_view mime_type,
                                       base::FilePath::StringType* extension) {
   return g_mime_util.Get().GetPreferredExtensionForMimeType(mime_type,
@@ -637,8 +684,10 @@ bool GetPreferredExtensionForMimeType(std::string_view mime_type,
 }
 
 bool MatchesMimeType(std::string_view mime_type_pattern,
-                     std::string_view mime_type) {
-  return g_mime_util.Get().MatchesMimeType(mime_type_pattern, mime_type);
+                     std::string_view mime_type,
+                     bool validate_mime_type) {
+  return g_mime_util.Get().MatchesMimeType(mime_type_pattern, mime_type,
+                                           validate_mime_type);
 }
 
 bool ParseMimeTypeWithoutParameter(std::string_view type_string,
@@ -947,6 +996,15 @@ std::optional<std::string> ExtractMimeTypeFromMediaType(
     return top_level_type + "/" + subtype;
   }
   return std::nullopt;
+}
+
+ScopedOverrideGetMimeTypeForTesting::ScopedOverrideGetMimeTypeForTesting(
+    std::string_view overriding_mime_type) {
+  GetOverridingMimeType() = overriding_mime_type;
+}
+
+ScopedOverrideGetMimeTypeForTesting::~ScopedOverrideGetMimeTypeForTesting() {
+  GetOverridingMimeType().clear();
 }
 
 }  // namespace net

@@ -4,17 +4,20 @@
 
 package org.chromium.chrome.browser.omnibox;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.text.TextUtils;
 import android.view.ActionMode;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.RequiresApi;
 
 import com.google.android.material.color.MaterialColors;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.omnibox.UrlBarProperties.AutocompleteText;
 import org.chromium.chrome.browser.omnibox.UrlBarProperties.UrlBarTextState;
 import org.chromium.ui.modelutil.PropertyKey;
@@ -23,6 +26,7 @@ import org.chromium.ui.modelutil.PropertyModel;
 import java.util.Optional;
 
 /** Handles translating the UrlBar model data to the view state. */
+@NullMarked
 class UrlBarViewBinder {
     /**
      * @see PropertyModelChangeProcfessor.ViewBinder#bind(Object, Object, Object)
@@ -34,6 +38,8 @@ class UrlBarViewBinder {
             view.setCustomSelectionActionModeCallback(callback);
         } else if (UrlBarProperties.ALLOW_FOCUS.equals(propertyKey)) {
             view.setAllowFocus(model.get(UrlBarProperties.ALLOW_FOCUS));
+        } else if (UrlBarProperties.IS_IN_CCT.equals(propertyKey)) {
+            view.setIsInCct(model.get(UrlBarProperties.IS_IN_CCT));
         } else if (UrlBarProperties.AUTOCOMPLETE_TEXT.equals(propertyKey)) {
             AutocompleteText autocomplete = model.get(UrlBarProperties.AUTOCOMPLETE_TEXT);
             if (view.shouldAutocomplete()) {
@@ -71,18 +77,34 @@ class UrlBarViewBinder {
                 } else if (state.selectionState == UrlBarCoordinator.SelectionState.SELECT_END) {
                     view.setSelection(view.getText().length());
                 }
+                // Move the accessibility focus to the Omnibox.
+                // This ensures the updated field is announced to the user, especially when the user
+                // recently interacted with Refine button.
+                view.requestAccessibilityFocus();
             }
         } else if (UrlBarProperties.TEXT_COLOR.equals(propertyKey)) {
             view.setTextColor(model.get(UrlBarProperties.TEXT_COLOR));
+        } else if (UrlBarProperties.USE_SMALL_TEXT.equals(propertyKey)) {
+            boolean useSmallText = model.get(UrlBarProperties.USE_SMALL_TEXT);
+            // Small text mode is used in a state where available vertical space is much lower and
+            // there is no location bar "pill" that we must draw inside. Removing the padding avoids
+            // over-constraining the text size to the point of illegibility.
+            int verticalPadding =
+                    useSmallText
+                            ? 0
+                            : view.getResources()
+                                    .getDimensionPixelSize(R.dimen.url_bar_vertical_padding);
+            view.setPaddingRelative(
+                    view.getPaddingStart(), verticalPadding, view.getPaddingEnd(), verticalPadding);
+            view.setUseSmallTextHeight(useSmallText);
+            view.setHint(getHintForTextSize(model));
         } else if (UrlBarProperties.HINT_TEXT_COLOR.equals(propertyKey)) {
             view.setHintTextColor(model.get(UrlBarProperties.HINT_TEXT_COLOR));
         } else if (UrlBarProperties.INCOGNITO_COLORS_ENABLED.equals(propertyKey)) {
             final boolean incognitoColorsEnabled =
                     model.get(UrlBarProperties.INCOGNITO_COLORS_ENABLED);
             updateHighlightColor(view, incognitoColorsEnabled);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                updateCursorAndSelectHandleColor(view, incognitoColorsEnabled);
-            }
+            updateCursorAndSelectHandleColor(view, incognitoColorsEnabled);
         } else if (UrlBarProperties.URL_DIRECTION_LISTENER.equals(propertyKey)) {
             view.setUrlDirectionListener(model.get(UrlBarProperties.URL_DIRECTION_LISTENER));
         } else if (UrlBarProperties.TEXT_CHANGE_LISTENER.equals(propertyKey)) {
@@ -106,7 +128,7 @@ class UrlBarViewBinder {
         } else if (UrlBarProperties.LONG_CLICK_LISTENER.equals(propertyKey)) {
             view.setOnLongClickListener(model.get(UrlBarProperties.LONG_CLICK_LISTENER));
         } else if (UrlBarProperties.HINT_TEXT.equals(propertyKey)) {
-            view.setHint(view.getContext().getString(model.get(UrlBarProperties.HINT_TEXT)));
+            view.setHint(getHintForTextSize(model));
         }
     }
 
@@ -130,14 +152,13 @@ class UrlBarViewBinder {
         view.setHighlightColor(highlightColor);
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.Q)
     private static void updateCursorAndSelectHandleColor(UrlBar view, boolean useIncognitoColors) {
         // These get* methods may fail on some devices, so we're calling all of them before
         // applying tint to any of the drawables. See https://crbug.com/1263630.
-        final Drawable textCursor = view.getTextCursorDrawable();
-        final Drawable textSelectHandle = view.getTextSelectHandle();
-        final Drawable textSelectHandleLeft = view.getTextSelectHandleLeft();
-        final Drawable textSelectHandleRight = view.getTextSelectHandleRight();
+        final Drawable textCursor = assumeNonNull(view.getTextCursorDrawable());
+        final Drawable textSelectHandle = assumeNonNull(view.getTextSelectHandle());
+        final Drawable textSelectHandleLeft = assumeNonNull(view.getTextSelectHandleLeft());
+        final Drawable textSelectHandleRight = assumeNonNull(view.getTextSelectHandleRight());
 
         final int color =
                 useIncognitoColors
@@ -147,6 +168,15 @@ class UrlBarViewBinder {
         textSelectHandle.mutate().setTint(color);
         textSelectHandleLeft.mutate().setTint(color);
         textSelectHandleRight.mutate().setTint(color);
+    }
+
+    private static @Nullable String getHintForTextSize(PropertyModel model) {
+        // Android TextView's set a desired size based on the max of the hint text width and the
+        // "regular" width. In small text mode, where we don't intend to show the hint, we set it to
+        // null to avoid over-allocating space for text that will never be shown.
+        return model.get(UrlBarProperties.USE_SMALL_TEXT)
+                ? null
+                : model.get(UrlBarProperties.HINT_TEXT);
     }
 
     private UrlBarViewBinder() {}

@@ -40,7 +40,7 @@ using content::DownloadManagerDelegate;
 DownloadCoreServiceImpl::DownloadCoreServiceImpl(Profile* profile)
     : download_manager_created_(false), profile_(profile) {}
 
-DownloadCoreServiceImpl::~DownloadCoreServiceImpl() {}
+DownloadCoreServiceImpl::~DownloadCoreServiceImpl() = default;
 
 ChromeDownloadManagerDelegate*
 DownloadCoreServiceImpl::GetDownloadManagerDelegate() {
@@ -81,11 +81,6 @@ DownloadCoreServiceImpl::GetDownloadManagerDelegate() {
   // default delegate does all the notifications we need.
   download_ui_ = std::make_unique<DownloadUIController>(
       manager, std::unique_ptr<DownloadUIController::Delegate>());
-
-#if !BUILDFLAG(IS_ANDROID)
-  download_shelf_controller_ =
-      std::make_unique<DownloadShelfController>(profile_);
-#endif
 
   // Include this download manager in the set monitored by the
   // global status updater.

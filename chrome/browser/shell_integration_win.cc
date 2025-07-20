@@ -741,6 +741,13 @@ DefaultWebClientState IsDefaultClientForScheme(const std::string& scheme) {
       ShellUtil::GetChromeDefaultProtocolClientState(base::UTF8ToWide(scheme)));
 }
 
+DefaultWebClientState IsDefaultHandlerForFileExtension(
+    const std::string& file_extension) {
+  return GetDefaultWebClientStateFromShellUtilDefaultState(
+      ShellUtil::GetChromeDefaultFileHandlerState(
+          base::UTF8ToWide(file_extension)));
+}
+
 namespace internal {
 
 DefaultWebClientSetPermission GetPlatformSpecificDefaultWebClientSetPermission(
@@ -956,24 +963,6 @@ int MigrateShortcutsInPathInternal(const base::FilePath& chrome_exe,
           break;
         default:
           NOTREACHED();
-      }
-    }
-
-    // Clear dual_mode property from any shortcuts that previously had it (it
-    // was only ever installed on shortcuts with the
-    // |default_chromium_model_id|).
-    std::wstring default_chromium_model_id(
-        ShellUtil::GetBrowserModelId(is_per_user_install));
-    if (expected_app_id == default_chromium_model_id) {
-      propvariant.Reset();
-      if (property_store->GetValue(PKEY_AppUserModel_IsDualMode,
-                                   propvariant.Receive()) != S_OK) {
-        // When in doubt, prefer to not update the shortcut.
-        NOTREACHED();
-      }
-      if (propvariant.get().vt == VT_BOOL &&
-                 !!propvariant.get().boolVal) {
-        updated_properties.set_dual_mode(false);
       }
     }
 

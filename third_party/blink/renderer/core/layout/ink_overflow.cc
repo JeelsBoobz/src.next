@@ -2,14 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/layout/ink_overflow.h"
 
-#include "build/chromeos_buildflags.h"
 #include "third_party/blink/renderer/core/editing/markers/custom_highlight_marker.h"
 #include "third_party/blink/renderer/core/editing/markers/document_marker.h"
 #include "third_party/blink/renderer/core/editing/markers/document_marker_controller.h"
@@ -80,10 +74,7 @@ InkOverflow::InkOverflow(Type source_type, const InkOverflow& source) {
       static_assert(sizeof(outsets_) == sizeof(single_),
                     "outsets should be the size of a pointer");
       single_ = source.single_;
-#if DCHECK_IS_ON()
-      for (wtf_size_t i = 0; i < std::size(outsets_); ++i)
-        DCHECK_EQ(outsets_[i], source.outsets_[i]);
-#endif
+      DCHECK(base::span(outsets_) == base::span(source.outsets_));
       break;
     case Type::kSelf:
     case Type::kContents:
@@ -109,10 +100,7 @@ InkOverflow::InkOverflow(Type source_type, InkOverflow&& source) {
       static_assert(sizeof(outsets_) == sizeof(single_),
                     "outsets should be the size of a pointer");
       single_ = source.single_;
-#if DCHECK_IS_ON()
-      for (wtf_size_t i = 0; i < std::size(outsets_); ++i)
-        DCHECK_EQ(outsets_[i], source.outsets_[i]);
-#endif
+      DCHECK(base::span(outsets_) == base::span(source.outsets_));
       break;
     case Type::kSelf:
     case Type::kContents:
@@ -366,7 +354,7 @@ InkOverflow::Type InkOverflow::SetTextInkOverflow(
   CheckType(type);
   DCHECK(type == Type::kNotSet || type == Type::kInvalidated);
   std::optional<PhysicalRect> ink_overflow =
-      ComputeTextInkOverflow(cursor, text_info, style, style.GetFont(),
+      ComputeTextInkOverflow(cursor, text_info, style, *style.GetFont(),
                              rect_in_container, inline_context);
   if (!ink_overflow) {
     *ink_overflow_out = {PhysicalOffset(), rect_in_container.size};
@@ -506,7 +494,7 @@ LogicalRect InkOverflow::ComputeEmphasisMarkOverflow(
   DCHECK(style.GetTextEmphasisMark() != TextEmphasisMark::kNone);
 
   LayoutUnit emphasis_mark_height = LayoutUnit(
-      style.GetFont().EmphasisMarkHeight(style.TextEmphasisMarkString()));
+      style.GetFont()->EmphasisMarkHeight(style.TextEmphasisMarkString()));
   DCHECK_GE(emphasis_mark_height, LayoutUnit());
 
   LogicalRect ink_overflow = ink_overflow_in;
@@ -580,7 +568,7 @@ LogicalRect InkOverflow::ComputeDecorationOverflow(
       fragment_item->IsGeneratedText()) {
     return accumulated_bound;
   }
-  const LayoutObject* layout_object = cursor.CurrentMutableLayoutObject();
+  const LayoutObject* layout_object = cursor.Current().GetLayoutObject();
   DCHECK(layout_object);
   Text* text_node = DynamicTo<Text>(layout_object->GetNode());
   // ::first-letter passes the IsGeneratedText check but has no text node.

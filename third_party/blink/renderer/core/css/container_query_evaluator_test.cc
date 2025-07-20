@@ -21,7 +21,6 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -35,7 +34,7 @@ class ContainerQueryEvaluatorTest : public PageTestBase {
  public:
   void SetUp() override {
     PageTestBase::SetUp();
-    GetDocument().body()->setInnerHTML(R"HTML(
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
       <div id="container-parent">
         <div id="container"></div>
       </div>
@@ -929,7 +928,7 @@ TEST_F(ContainerQueryEvaluatorTest, FindSnapContainer) {
 }
 
 TEST_F(ContainerQueryEvaluatorTest, ScopedCaching) {
-  GetDocument().documentElement()->setHTMLUnsafe(R"HTML(
+  GetDocument().documentElement()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <div id="host" style="container-name: n1">
       <template shadowrootmode=open>
         <div style="container-name: n1">

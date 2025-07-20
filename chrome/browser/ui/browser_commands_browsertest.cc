@@ -8,6 +8,7 @@
 #include "base/task/current_thread.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "browser_commands.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
@@ -51,7 +52,6 @@ class BrowserCommandsTest : public InProcessBrowserTest {
         {
             features::kTabOrganization,
             features::kTabstripDeclutter,
-            toast_features::kToastFramework,
             toast_features::kReadingListToast,
             toast_features::kLinkCopiedToast,
         },
@@ -82,7 +82,7 @@ class BrowserCommandsTest : public InProcessBrowserTest {
     // Add tabs to the selection (the last one created remains selected) and
     // trigger a reload command on all of them.
     for (int i = 0; i < tab_count - 1; ++i) {
-      browser()->tab_strip_model()->ToggleSelectionAt(i + 1);
+      browser()->tab_strip_model()->SelectTabAt(i + 1);
     }
     EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_RELOAD));
     browser()->tab_strip_model()->CloseSelectedTabs();
@@ -147,18 +147,21 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandsTest, ReloadSelectedTabs) {
     watcher_vec[i].SetWebContents(tab);
   }
 
-  for (ReloadObserver& watcher : watcher_vec)
+  for (ReloadObserver& watcher : watcher_vec) {
     EXPECT_EQ(0, watcher.load_count());
+  }
 
   // Add two tabs to the selection (the last one created remains selected) and
   // trigger a reload command on all of them.
-  for (int i = 0; i < kTabCount - 1; i++)
-    browser()->tab_strip_model()->ToggleSelectionAt(i + 1);
+  for (int i = 0; i < kTabCount - 1; i++) {
+    browser()->tab_strip_model()->SelectTabAt(i + 1);
+  }
   EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_RELOAD));
 
   int load_sum = 0;
-  for (ReloadObserver& watcher : watcher_vec)
+  for (ReloadObserver& watcher : watcher_vec) {
     load_sum += watcher.load_count();
+  }
   EXPECT_EQ(kTabCount, load_sum);
 }
 
@@ -222,8 +225,9 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandsTest, DISABLED_ReloadBreakageUKM) {
 
 IN_PROC_BROWSER_TEST_F(BrowserCommandsTest, MoveTabsToNewWindow) {
   auto AddTabs = [](Browser* browser, unsigned int num_tabs) {
-    for (unsigned int i = 0; i < num_tabs; ++i)
+    for (unsigned int i = 0; i < num_tabs; ++i) {
       chrome::NewTab(browser);
+    }
   };
 
   // Single Tab Move to New Window.
@@ -253,10 +257,51 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandsTest, MoveTabsToNewWindow) {
   EXPECT_EQ(2, browser->tab_strip_model()->count());
 }
 
+IN_PROC_BROWSER_TEST_F(BrowserCommandsTest, MoveGroupToNewWindow) {
+  auto AddTabs = [](Browser* browser, unsigned int num_tabs) {
+    for (unsigned int i = 0; i < num_tabs; ++i) {
+      chrome::NewTab(browser);
+    }
+  };
+
+  AddTabs(browser(), 2);
+  std::vector<int> indices = {1, 2};
+  tab_groups::TabGroupId group_id =
+      browser()->tab_strip_model()->AddToNewGroup(indices);
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(
+      group_id, tab_groups::TabGroupVisualData(
+                    u"Test Group", tab_groups::TabGroupColorId::kGrey));
+  ui_test_utils::BrowserChangeObserver new_browser_observer(
+      nullptr, ui_test_utils::BrowserChangeObserver::ChangeType::kAdded);
+
+  chrome::MoveGroupToNewWindow(browser(), group_id);
+  ASSERT_TRUE(browser()->tab_strip_model()->count() == 1);
+
+  Browser* active_browser = new_browser_observer.Wait();
+  ui_test_utils::WaitUntilBrowserBecomeActive(active_browser);
+
+  EXPECT_TRUE(
+      active_browser->tab_strip_model()->group_model()->ContainsTabGroup(
+          group_id));
+  EXPECT_EQ(active_browser->tab_strip_model()
+                ->group_model()
+                ->GetTabGroup(group_id)
+                ->ListTabs()
+                .length(),
+            2u);
+  EXPECT_EQ(*active_browser->tab_strip_model()
+                 ->group_model()
+                 ->GetTabGroup(group_id)
+                 ->visual_data(),
+            tab_groups::TabGroupVisualData(u"Test Group",
+                                           tab_groups::TabGroupColorId::kGrey));
+}
+
 IN_PROC_BROWSER_TEST_F(BrowserCommandsTest, MoveToExistingWindow) {
   auto AddTabs = [](Browser* browser, unsigned int num_tabs) {
-    for (unsigned int i = 0; i < num_tabs; ++i)
+    for (unsigned int i = 0; i < num_tabs; ++i) {
       chrome::NewTab(browser);
+    }
   };
 
   // Create another window, and add tabs.
@@ -330,7 +375,7 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandsTest,
   ASSERT_TRUE(AddTabAtIndex(1, url2, ui::PAGE_TRANSITION_LINK));
   ASSERT_TRUE(AddTabAtIndex(2, url3, ui::PAGE_TRANSITION_LINK));
   // Select the first tab.
-  browser()->tab_strip_model()->ToggleSelectionAt(0);
+  browser()->tab_strip_model()->SelectTabAt(0);
   // First and third (since it's active) should be selected
   EXPECT_TRUE(browser()->tab_strip_model()->IsTabSelected(0));
   EXPECT_FALSE(browser()->tab_strip_model()->IsTabSelected(1));
@@ -396,7 +441,7 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandsTest,
   Browser* popup_browser = Browser::Create(
       Browser::CreateParams(Browser::TYPE_POPUP, browser()->profile(), true));
   chrome::AddTabAt(popup_browser, GURL(url::kAboutBlankURL), -1, true);
-  popup_browser->tab_strip_model()->ToggleSelectionAt(0);
+  popup_browser->tab_strip_model()->SelectTabAt(0);
   browser()->tab_strip_model()->CloseAllTabs();
   ConvertPopupToTabbedBrowser(popup_browser);
   EXPECT_EQ(false, browser_shutdown::HasShutdownStarted());

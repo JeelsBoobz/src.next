@@ -541,6 +541,52 @@ inline CSSValueID PlatformEnumToCSSValueID(TryTactic v) {
   }
 }
 
+template <>
+inline EAnimationTriggerBehavior CssValueIDToPlatformEnum(CSSValueID v) {
+  switch (v) {
+    case CSSValueID::kOnce:
+      return EAnimationTriggerBehavior::kOnce;
+    case CSSValueID::kRepeat:
+      return EAnimationTriggerBehavior::kRepeat;
+    case CSSValueID::kAlternate:
+      return EAnimationTriggerBehavior::kAlternate;
+    case CSSValueID::kState:
+      return EAnimationTriggerBehavior::kState;
+    default:
+      NOTREACHED();
+  }
+}
+
+template <>
+inline CSSValueID PlatformEnumToCSSValueID(EAnimationTriggerBehavior v) {
+  switch (v) {
+    case EAnimationTriggerBehavior::kOnce:
+      return CSSValueID::kOnce;
+    case EAnimationTriggerBehavior::kRepeat:
+      return CSSValueID::kRepeat;
+    case EAnimationTriggerBehavior::kAlternate:
+      return CSSValueID::kAlternate;
+    case EAnimationTriggerBehavior::kState:
+      return CSSValueID::kState;
+    default:
+      NOTREACHED();
+  }
+}
+
+template <>
+inline CSSValueID PlatformEnumToCSSValueID(FlexWrapMode v) {
+  switch (v) {
+    case FlexWrapMode::kNowrap:
+      return CSSValueID::kNowrap;
+    case FlexWrapMode::kWrap:
+      return CSSValueID::kWrap;
+    case FlexWrapMode::kWrapReverse:
+      return CSSValueID::kWrapReverse;
+    default:
+      NOTREACHED();
+  }
+}
+
 }  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_VALUE_ID_MAPPINGS_H_

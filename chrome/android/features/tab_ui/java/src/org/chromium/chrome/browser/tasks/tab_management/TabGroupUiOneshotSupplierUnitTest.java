@@ -28,14 +28,18 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.Callback;
+import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
+import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.ActivityTabProvider;
+import org.chromium.chrome.browser.bookmarks.TabBookmarker;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabManager;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
+import org.chromium.chrome.browser.share.ShareDelegate;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
@@ -44,8 +48,9 @@ import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterProvider;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.theme.ThemeColorProvider;
+import org.chromium.chrome.browser.undo_tab_close_snackbar.UndoBarThrottle;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
-import org.chromium.components.browser_ui.widget.scrim.ScrimCoordinator;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
 /** Unit tests for {@link TabGroupUiOneshotSupplier}. */
@@ -58,12 +63,13 @@ public class TabGroupUiOneshotSupplierUnitTest {
     @Mock private Activity mActivity;
     @Mock private ViewGroup mViewGroup;
     @Mock private BrowserControlsStateProvider mBrowserControlsStateProvider;
-    @Mock private ScrimCoordinator mScrimCoordinator;
+    @Mock private ScrimManager mScrimManager;
     @Mock private BottomSheetController mBottomSheetController;
     @Mock private DataSharingTabManager mDataSharingTabManager;
     @Mock private TabContentManager mTabContentManager;
     @Mock private TabCreatorManager mTabCreatorManager;
     @Mock private ModalDialogManager mModalDialogManager;
+    @Mock private UndoBarThrottle mUndoBarThrottle;
 
     @Mock private Tab mTab;
     @Mock private TabGroupModelFilterProvider mTabGroupModelFilterProvider;
@@ -71,13 +77,15 @@ public class TabGroupUiOneshotSupplierUnitTest {
     @Mock private TabManagementDelegate mTabManagementDelegate;
     @Mock private TabGroupUi mTabGroupUi;
     @Mock private ThemeColorProvider mThemeColorProvider;
+    @Mock private ObservableSupplier<TabBookmarker> mTabBookmarkerSupplier;
+    @Mock private Supplier<ShareDelegate> mShareDelegateSupplier;
 
     @Captor private ArgumentCaptor<TabObserver> mTabObserverCaptor;
     @Captor private ArgumentCaptor<Callback<Tab>> mActivityTabObserverCaptor;
 
-    private ObservableSupplierImpl<Boolean> mOmniboxFocusStateSupplier =
+    private final ObservableSupplierImpl<Boolean> mOmniboxFocusStateSupplier =
             new ObservableSupplierImpl<>();
-    private OneshotSupplier<LayoutStateProvider> mLayoutStateProviderSupplier =
+    private final OneshotSupplier<LayoutStateProvider> mLayoutStateProviderSupplier =
             new OneshotSupplierImpl<>();
 
     private TabGroupUiOneshotSupplier mTabGroupUiOneshotSupplier;
@@ -96,7 +104,7 @@ public class TabGroupUiOneshotSupplierUnitTest {
                         mActivity,
                         mViewGroup,
                         mBrowserControlsStateProvider,
-                        mScrimCoordinator,
+                        mScrimManager,
                         mOmniboxFocusStateSupplier,
                         mBottomSheetController,
                         mDataSharingTabManager,
@@ -104,10 +112,13 @@ public class TabGroupUiOneshotSupplierUnitTest {
                         mTabCreatorManager,
                         mLayoutStateProviderSupplier,
                         mModalDialogManager,
-                        mThemeColorProvider);
+                        mThemeColorProvider,
+                        mUndoBarThrottle,
+                        mTabBookmarkerSupplier,
+                        mShareDelegateSupplier);
         when(mTabManagementDelegate.createTabGroupUi(
                         any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                        any(), any()))
+                        any(), any(), any(), any(), any()))
                 .thenReturn(mTabGroupUi);
         TabManagementDelegateProvider.setTabManagementDelegateForTesting(mTabManagementDelegate);
 
@@ -140,7 +151,7 @@ public class TabGroupUiOneshotSupplierUnitTest {
                         mActivity,
                         mViewGroup,
                         mBrowserControlsStateProvider,
-                        mScrimCoordinator,
+                        mScrimManager,
                         mOmniboxFocusStateSupplier,
                         mBottomSheetController,
                         mDataSharingTabManager,
@@ -149,7 +160,10 @@ public class TabGroupUiOneshotSupplierUnitTest {
                         mTabCreatorManager,
                         mLayoutStateProviderSupplier,
                         mModalDialogManager,
-                        mThemeColorProvider);
+                        mThemeColorProvider,
+                        mUndoBarThrottle,
+                        mTabBookmarkerSupplier,
+                        mShareDelegateSupplier);
         assertNotNull(mTabGroupUiOneshotSupplier.get());
     }
 
@@ -169,7 +183,7 @@ public class TabGroupUiOneshotSupplierUnitTest {
                         mActivity,
                         mViewGroup,
                         mBrowserControlsStateProvider,
-                        mScrimCoordinator,
+                        mScrimManager,
                         mOmniboxFocusStateSupplier,
                         mBottomSheetController,
                         mDataSharingTabManager,
@@ -178,7 +192,10 @@ public class TabGroupUiOneshotSupplierUnitTest {
                         mTabCreatorManager,
                         mLayoutStateProviderSupplier,
                         mModalDialogManager,
-                        mThemeColorProvider);
+                        mThemeColorProvider,
+                        mUndoBarThrottle,
+                        mTabBookmarkerSupplier,
+                        mShareDelegateSupplier);
         assertNotNull(mTabGroupUiOneshotSupplier.get());
     }
 }

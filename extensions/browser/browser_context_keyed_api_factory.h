@@ -72,7 +72,7 @@ class BrowserContextKeyedAPI : public KeyedService {
 };
 
 // Declare dependencies on other factories.
-// By default, ExtensionSystemFactory is the only dependency; however,
+// By default, ChromeExtensionSystemFactory is the only dependency; however,
 // specializations can override this. Declare your specialization in
 // your header file after the BrowserContextKeyedAPI class definition.
 // Declare this struct in the header file. The implementation may optionally
@@ -143,18 +143,9 @@ class BrowserContextKeyedAPIFactory : public BrowserContextKeyedServiceFactory {
  private:
   friend struct BrowserContextFactoryDependencies<T>;
 
-  // BrowserContextKeyedServiceFactory implementation.
-  KeyedService* BuildServiceInstanceFor(
-      content::BrowserContext* context) const override {
-    return new T(context);
-  }
-
-  // BrowserContextKeyedServiceFactory implementation.
   std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override {
-    // Use `WrapUnique()` because `T` constructor is not always public,
-    // so `make_unique` would not work.
-    return base::WrapUnique(BuildServiceInstanceFor(context));
+    return std::make_unique<T>(context);
   }
 
   // BrowserContextKeyedServiceFactory implementation.

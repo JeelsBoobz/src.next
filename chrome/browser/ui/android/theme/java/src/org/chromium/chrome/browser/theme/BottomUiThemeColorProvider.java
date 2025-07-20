@@ -8,9 +8,11 @@ import android.content.Context;
 import android.content.res.ColorStateList;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.tabmodel.IncognitoStateProvider;
@@ -31,6 +33,7 @@ import org.chromium.components.browser_ui.styles.SemanticColorUtils;
  * This allows other bottom controls using this class to match the toolbar's color when it's
  * visually adjacent to them.
  */
+@NullMarked
 public class BottomUiThemeColorProvider extends ThemeColorProvider
         implements BrowserControlsStateProvider.Observer,
                 IncognitoStateObserver,
@@ -40,10 +43,11 @@ public class BottomUiThemeColorProvider extends ThemeColorProvider
     private final ThemeColorProvider mToolbarThemeColorProvider;
     private final @ColorInt int mPrimaryBackgroundColorWithTopToolbar;
     private final @ColorInt int mIncognitoBackgroundColorWithTopToolbar;
-    private final ColorStateList mPrimaryTintWithTopToolbar;
-    private final ColorStateList mIncognitoTintWithTopToolbar;
+    private final @Nullable ColorStateList mPrimaryTintWithTopToolbar;
+    private final @Nullable ColorStateList mIncognitoTintWithTopToolbar;
     private final Context mContext;
     private final BrowserControlsStateProvider mBrowserControlsStateProvider;
+    private final BottomControlsStacker mBottomControlsStacker;
     private final IncognitoStateProvider mIncognitoStateProvider;
     private @ControlsPosition int mControlsPosition;
     private boolean mIncognito;
@@ -52,23 +56,25 @@ public class BottomUiThemeColorProvider extends ThemeColorProvider
      * @param toolbarThemeColorProvider Theme color provider for the toolbar contained in the
      *     control container, which can be either bottom- or top-anchored.
      * @param browserControlsStateProvider Provider of the state of the browser controls.
+     * @param bottomControlsStacker BrowserControlsStacker instance.
      * @param incognitoStateProvider Provided of current incognito state.
      * @param context The {@link Context} that is used to retrieve color related resources.
      */
     public BottomUiThemeColorProvider(
-            @NonNull ThemeColorProvider toolbarThemeColorProvider,
-            @NonNull BrowserControlsStateProvider browserControlsStateProvider,
-            @NonNull IncognitoStateProvider incognitoStateProvider,
-            @NonNull Context context) {
+            ThemeColorProvider toolbarThemeColorProvider,
+            BrowserControlsStateProvider browserControlsStateProvider,
+            BottomControlsStacker bottomControlsStacker,
+            IncognitoStateProvider incognitoStateProvider,
+            Context context) {
         super(context);
         mContext = context;
         mToolbarThemeColorProvider = toolbarThemeColorProvider;
         mBrowserControlsStateProvider = browserControlsStateProvider;
+        mBottomControlsStacker = bottomControlsStacker;
         mIncognitoStateProvider = incognitoStateProvider;
         mControlsPosition = browserControlsStateProvider.getControlsPosition();
-        mPrimaryBackgroundColorWithTopToolbar = SemanticColorUtils.getDialogBgColor(context);
-        mIncognitoBackgroundColorWithTopToolbar =
-                context.getColor(R.color.dialog_bg_color_dark_baseline);
+        mPrimaryBackgroundColorWithTopToolbar = SemanticColorUtils.getColorSurface(context);
+        mIncognitoBackgroundColorWithTopToolbar = context.getColor(R.color.tab_strip_bg_incognito);
 
         mPrimaryTintWithTopToolbar =
                 ContextCompat.getColorStateList(mContext, R.color.default_icon_color_tint_list);
@@ -113,7 +119,9 @@ public class BottomUiThemeColorProvider extends ThemeColorProvider
     // TintObserver implementation.
     @Override
     public void onTintChanged(
-            ColorStateList tint, ColorStateList activityFocusTint, int brandedColorScheme) {
+            @Nullable ColorStateList tint,
+            @Nullable ColorStateList activityFocusTint,
+            int brandedColorScheme) {
         updateColorAndTint(false);
     }
 
@@ -131,9 +139,10 @@ public class BottomUiThemeColorProvider extends ThemeColorProvider
                     mToolbarThemeColorProvider.getActivityFocusTint(),
                     mToolbarThemeColorProvider.getBrandedColorScheme());
         }
+        mBottomControlsStacker.notifyBackgroundColor(getThemeColor());
     }
 
-    private ColorStateList getTintForTopAnchoredToolbar() {
+    private @Nullable ColorStateList getTintForTopAnchoredToolbar() {
         return mIncognito ? mIncognitoTintWithTopToolbar : mPrimaryTintWithTopToolbar;
     }
 

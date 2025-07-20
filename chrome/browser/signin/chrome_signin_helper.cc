@@ -14,7 +14,6 @@
 #include "base/strings/string_util.h"
 #include "base/supports_user_data.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
@@ -35,6 +34,7 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "google_apis/gaia/gaia_auth_util.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "net/http/http_response_headers.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -52,7 +52,7 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "components/account_manager_core/chromeos/account_manager_facade_factory.h"
+#include "chromeos/ash/components/account_manager/account_manager_facade_factory.h"
 #include "components/supervised_user/core/browser/supervised_user_service.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -233,8 +233,7 @@ void ProcessMirrorHeader(
   // Do not allow non-Google origins to open incognito windows.
   // TODO(crbug.com/40064889): Expand this check to all Mirror headers,
   //                          regardless of `service_type`.
-  if (service_type == GAIA_SERVICE_TYPE_INCOGNITO &&
-      base::FeatureList::IsEnabled(kVerifyRequestInitiatorForMirrorHeaders)) {
+  if (service_type == GAIA_SERVICE_TYPE_INCOGNITO) {
     GURL initiator_url =
         request_initiator ? request_initiator->GetURL() : GURL();
     bool is_request_initiated_by_google_domain =
@@ -316,20 +315,20 @@ void ProcessMirrorHeader(
     // Display a re-authentication dialog.
     signin_ui_util::ShowReauthForAccount(
         profile, manage_accounts_params.email,
-        signin_metrics::AccessPoint::ACCESS_POINT_WEB_SIGNIN);
+        signin_metrics::AccessPoint::kWebSignin);
     return;
   }
 
   // 3. Displaying an account addition window.
   if (service_type == GAIA_SERVICE_TYPE_ADDSESSION) {
-    ::GetAccountManagerFacade(profile->GetPath().value())
+    ash::GetAccountManagerFacade(profile->GetPath().value())
         ->ShowAddAccountDialog(account_manager::AccountManagerFacade::
                                    AccountAdditionSource::kOgbAddAccount);
     return;
   }
 
   // 4. Displaying the Account Manager for managing accounts.
-  ::GetAccountManagerFacade(profile->GetPath().value())
+  ash::GetAccountManagerFacade(profile->GetPath().value())
       ->ShowManageAccountsSettings();
   return;
 
@@ -482,29 +481,32 @@ void ProcessDiceResponseHeaderIfExists(ResponseAdapter* response,
 }
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
-std::string ParseGaiaIdFromRemoveLocalAccountResponseHeader(
+GaiaId ParseGaiaIdFromRemoveLocalAccountResponseHeader(
     const net::HttpResponseHeaders* response_headers) {
-  if (!response_headers)
-    return std::string();
+  if (!response_headers) {
+    return GaiaId();
+  }
 
   std::optional<std::string> header_value =
       response_headers->GetNormalizedHeader(
           kGoogleRemoveLocalAccountResponseHeader);
   if (!header_value) {
-    return std::string();
+    return GaiaId();
   }
 
   const SigninHeaderHelper::ResponseHeaderDictionary header_dictionary =
       SigninHeaderHelper::ParseAccountConsistencyResponseHeader(*header_value);
 
-  std::string gaia_id;
   const auto it =
       header_dictionary.find(kRemoveLocalAccountObfuscatedIDAttrName);
-  if (it != header_dictionary.end()) {
-    // The Gaia ID is wrapped in quotes.
-    base::TrimString(it->second, "\"", &gaia_id);
+  if (it == header_dictionary.end()) {
+    return GaiaId();
   }
-  return gaia_id;
+
+  // The Gaia ID is wrapped in quotes.
+  std::string gaia_id_str;
+  base::TrimString(it->second, "\"", &gaia_id_str);
+  return GaiaId(gaia_id_str);
 }
 
 void ProcessRemoveLocalAccountResponseHeaderIfExists(ResponseAdapter* response,
@@ -514,7 +516,7 @@ void ProcessRemoveLocalAccountResponseHeaderIfExists(ResponseAdapter* response,
   if (is_off_the_record)
     return;
 
-  const std::string gaia_id =
+  const GaiaId gaia_id =
       ParseGaiaIdFromRemoveLocalAccountResponseHeader(response->GetHeaders());
 
   if (gaia_id.empty())
@@ -562,11 +564,11 @@ void FixAccountConsistencyRequestHeader(
     ChromeRequestAdapter* request,
     const GURL& redirect_url,
     bool is_off_the_record,
-    int incognito_availibility,
+    int incognito_availability,
     AccountConsistencyMethod account_consistency,
-    const std::string& gaia_id,
+    const GaiaId& gaia_id,
     signin::Tribool is_child_account,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     bool is_secondary_account_addition_allowed,
 #endif
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -583,13 +585,13 @@ void FixAccountConsistencyRequestHeader(
   // The Mirror header may be added on desktop platforms, for integration with
   // Google Drive.
   int profile_mode_mask = PROFILE_MODE_DEFAULT;
-  if (incognito_availibility ==
+  if (incognito_availability ==
           static_cast<int>(policy::IncognitoModeAvailability::kDisabled) ||
       IncognitoModePrefs::ArePlatformParentalControlsEnabled()) {
     profile_mode_mask |= PROFILE_MODE_INCOGNITO_DISABLED;
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (!is_secondary_account_addition_allowed) {
     account_consistency = AccountConsistencyMethod::kMirror;
     // Can't add new accounts.
@@ -644,7 +646,7 @@ void ProcessAccountConsistencyResponseHeaders(ResponseAdapter* response,
   ProcessRemoveLocalAccountResponseHeaderIfExists(response, is_off_the_record);
 }
 
-std::string ParseGaiaIdFromRemoveLocalAccountResponseHeaderForTesting(
+GaiaId ParseGaiaIdFromRemoveLocalAccountResponseHeaderForTesting(
     const net::HttpResponseHeaders* response_headers) {
   return ParseGaiaIdFromRemoveLocalAccountResponseHeader(response_headers);
 }

@@ -11,7 +11,6 @@ found in the LICENSE file.
     android:id="@+id/ntp_content"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/home_surface_background"
     android:layout_gravity="center_horizontal"
     android:orientation="vertical"
     android:gravity="center"
@@ -29,6 +28,16 @@ found in the LICENSE file.
 
     <!-- Search box -->
     <include layout="@layout/fake_search_box_layout"/>
+
+    <ViewStub
+        android:id="@+id/composeplate_view_stub"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/composeplate_view_height"
+        android:layout_marginTop="@dimen/composeplate_view_margin_top"
+        android:layout_marginStart="@dimen/mvt_container_lateral_margin"
+        android:layout_marginEnd="@dimen/mvt_container_lateral_margin"
+        android:layout="@layout/composeplate_view_layout"
+        android:visibility="gone" />
 
     <!-- Query tiles -->
     <FrameLayout

@@ -15,6 +15,7 @@
 #include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/css_relative_color_value.h"
 #include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
+#include "third_party/blink/renderer/core/css/properties/css_color_function_parser.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/platform/geometry/calculation_expression_node.h"
@@ -129,23 +130,24 @@ StyleColor::UnresolvedRelativeColor::UnresolvedRelativeColor(
     const CSSValue& channel0,
     const CSSValue& channel1,
     const CSSValue& channel2,
-    const CSSValue* alpha)
+    const CSSValue* alpha,
+    const CSSToLengthConversionData& conversion_data)
     : UnresolvedColorFunction(UnresolvedColorFunction::Type::kRelativeColor),
       origin_color_(origin_color.color_or_unresolved_color_function_),
       origin_color_type_(ResolveColorOperandType(origin_color)),
       color_interpolation_space_(color_interpolation_space) {
   auto to_channel =
-      [](const CSSValue& value) -> scoped_refptr<const CalculationValue> {
+      [&conversion_data](const CSSValue& value) -> const CalculationValue* {
     if (const CSSNumericLiteralValue* numeric =
             DynamicTo<CSSNumericLiteralValue>(value)) {
       if (numeric->IsPercentage()) {
-        return CalculationValue::Create(
+        return MakeGarbageCollected<CalculationValue>(
             PixelsAndPercent(0., numeric->DoubleValue(), false, true),
             Length::ValueRange::kAll);
       } else {
         // It's not actually a "pixels" value, but treating it as one simplifies
         // storage and resolution.
-        return CalculationValue::Create(
+        return MakeGarbageCollected<CalculationValue>(
             PixelsAndPercent(numeric->DoubleValue()), Length::ValueRange::kAll);
       }
     } else if (const CSSIdentifierValue* identifier =
@@ -153,14 +155,16 @@ StyleColor::UnresolvedRelativeColor::UnresolvedRelativeColor(
       if (identifier->GetValueID() == CSSValueID::kNone) {
         return nullptr;
       }
-      scoped_refptr<CalculationExpressionNode> expression =
-          base::MakeRefCounted<CalculationExpressionColorChannelKeywordNode>(
+      const CalculationExpressionNode* expression =
+          MakeGarbageCollected<CalculationExpressionColorChannelKeywordNode>(
               CSSValueIDToColorChannelKeyword(identifier->GetValueID()));
-      return CalculationValue::CreateSimplified(std::move(expression),
+      return CalculationValue::CreateSimplified(expression,
                                                 Length::ValueRange::kAll);
     } else if (const CSSMathFunctionValue* function =
                    DynamicTo<CSSMathFunctionValue>(value)) {
-      return function->ToCalcValue(CSSToLengthConversionData());
+      // TODO(crbug.com/428657802): This is a temporary fix, we shouldn't mix
+      // SVG "user units" and <number> type, as "user units" should be zoomed.
+      return function->ToCalcValue(conversion_data.Unzoomed());
     } else {
       NOTREACHED();
     }
@@ -178,8 +182,8 @@ StyleColor::UnresolvedRelativeColor::UnresolvedRelativeColor(
     // of the origin color (rather than defaulting to 100%, as it does in the
     // absolute syntax).
     alpha_was_specified_ = false;
-    scoped_refptr<CalculationExpressionNode> expression =
-        base::MakeRefCounted<CalculationExpressionColorChannelKeywordNode>(
+    const CalculationExpressionNode* expression =
+        MakeGarbageCollected<CalculationExpressionColorChannelKeywordNode>(
             ColorChannelKeyword::kAlpha);
     alpha_ = CalculationValue::CreateSimplified(std::move(expression),
                                                 Length::ValueRange::kAll);
@@ -189,11 +193,15 @@ StyleColor::UnresolvedRelativeColor::UnresolvedRelativeColor(
 void StyleColor::UnresolvedRelativeColor::Trace(Visitor* visitor) const {
   UnresolvedColorFunction::Trace(visitor);
   visitor->Trace(origin_color_);
+  visitor->Trace(channel0_);
+  visitor->Trace(channel1_);
+  visitor->Trace(channel2_);
+  visitor->Trace(alpha_);
 }
 
 CSSValue* StyleColor::UnresolvedRelativeColor::ToCSSValue() const {
-  auto to_css_value = [](const scoped_refptr<const CalculationValue>& channel)
-      -> const CSSValue* {
+  auto to_css_value =
+      [](const Member<const CalculationValue>& channel) -> const CSSValue* {
     if (channel == nullptr) {
       return CSSIdentifierValue::Create(CSSValueID::kNone);
     }
@@ -206,11 +214,11 @@ CSSValue* StyleColor::UnresolvedRelativeColor::ToCSSValue() const {
             channel->Pixels(), CSSPrimitiveValue::UnitType::kNumber);
       }
     }
-    scoped_refptr<const CalculationExpressionNode> expression =
+    const CalculationExpressionNode* expression =
         channel->GetOrCreateExpression();
     if (expression->IsColorChannelKeyword()) {
       return CSSIdentifierValue::Create(ColorChannelKeywordToCSSValueID(
-          To<CalculationExpressionColorChannelKeywordNode>(expression.get())
+          To<CalculationExpressionColorChannelKeywordNode>(expression)
               ->Value()));
     } else {
       return CSSMathFunctionValue::Create(
@@ -253,18 +261,11 @@ Color StyleColor::UnresolvedRelativeColor::Resolve(
   // hsl and hwb are specified with percent reference ranges of 0..100 in
   // channels 1 and 2, but blink::Color represents these values over 0..1.
   // We scale up the origin values so that they pass through computation
-  // correctly, then later, scale them down in the final result.
-  //
-  // https://www.w3.org/TR/css-color-4/#hue-syntax
-  // Channels representing <hue> are normalized to the range [0,360).
-  const bool is_hxx_color_space =
-      (color_interpolation_space_ == Color::ColorSpace::kHSL) ||
-      (color_interpolation_space_ == Color::ColorSpace::kHWB);
-  const bool is_lch_color_space =
-      (color_interpolation_space_ == Color::ColorSpace::kLch) ||
-      (color_interpolation_space_ == Color::ColorSpace::kOklch);
-
-  if (is_hxx_color_space) {
+  // correctly, then later
+  // (in ColorFunctionParser::MakePerColorSpaceAdjustments()), scale them down
+  // in the final result.
+  if (color_interpolation_space_ == Color::ColorSpace::kHSL ||
+      color_interpolation_space_ == Color::ColorSpace::kHWB) {
     keyword_values[1].second *= 100.;
     keyword_values[2].second *= 100.;
   }
@@ -275,7 +276,7 @@ Color StyleColor::UnresolvedRelativeColor::Resolve(
 
   auto to_channel_value =
       [&evaluation_input](const CalculationValue* calculation_value,
-                          double channel_percentage) -> std::optional<float> {
+                          double channel_percentage) -> std::optional<double> {
     // The color function metadata table uses NaN to indicate that percentages
     // are not applicable to a given channel. NaN is not suitable as a clamp
     // limit for evaluating a CalculationValue, so translate it into float max.
@@ -288,43 +289,21 @@ Color StyleColor::UnresolvedRelativeColor::Resolve(
     return std::nullopt;
   };
 
-  std::array<std::optional<float>, 3> params = {
-      to_channel_value(channel0_.get(),
+  std::array<std::optional<double>, 3> params = {
+      to_channel_value(channel0_.Get(),
                        function_metadata.channel_percentage[0]),
-      to_channel_value(channel1_.get(),
+      to_channel_value(channel1_.Get(),
                        function_metadata.channel_percentage[1]),
-      to_channel_value(channel2_.get(),
+      to_channel_value(channel2_.Get(),
                        function_metadata.channel_percentage[2])};
-  std::optional<float> param_alpha = to_channel_value(alpha_.get(), 1.f);
+  std::optional<double> param_alpha = to_channel_value(alpha_.Get(), 1.f);
+  ColorFunctionParser::MakePerColorSpaceAdjustments(
+      /*is_relative_color=*/true,
+      /*is_legacy_syntax=*/false, color_interpolation_space_, params,
+      param_alpha);
 
-  auto wrap_hue_channel = [](std::optional<float>& param) {
-    if (param.has_value()) {
-      // Perform the wrap at double precision to avoid floating-point rounding
-      // drift which is observable at single precision for some values.
-      param.value() =
-          fmod(fmod(static_cast<double>(param.value()), 360.0) + 360.0, 360.0);
-    }
-  };
-  auto scale_down_channel = [](std::optional<float>& param) {
-    if (param.has_value()) {
-      param.value() /= 100.f;
-    }
-  };
-  if (is_hxx_color_space) {
-    wrap_hue_channel(params[0]);
-    scale_down_channel(params[1]);
-    scale_down_channel(params[2]);
-  } else if (is_lch_color_space) {
-    wrap_hue_channel(params[2]);
-  }
-
-  Color result = Color::FromColorSpace(color_interpolation_space_, params[0],
-                                       params[1], params[2], param_alpha);
-  if (Color::IsLegacyColorSpace(result.GetColorSpace()) &&
-      !RuntimeEnabledFeatures::CSSRelativeColorPreserveNoneEnabled()) {
-    result.ConvertToColorSpace(Color::ColorSpace::kSRGB);
-  }
-  return result;
+  return Color::FromColorSpace(color_interpolation_space_, params[0], params[1],
+                               params[2], param_alpha);
 }
 
 bool StyleColor::UnresolvedRelativeColor::operator==(
@@ -375,15 +354,6 @@ Color StyleColor::Resolve(const Color& current_color,
                             /*is_in_web_app_scope=*/false);
   }
   return GetColor();
-}
-
-Color StyleColor::ResolveWithAlpha(Color current_color,
-                                   mojom::blink::ColorScheme color_scheme,
-                                   int alpha,
-                                   bool* is_current_color) const {
-  Color color = Resolve(current_color, color_scheme, is_current_color);
-  // TODO(crbug.com/1333988) This looks unfriendly to CSS Color 4.
-  return Color(color.Red(), color.Green(), color.Blue(), alpha);
 }
 
 StyleColor StyleColor::ResolveSystemColor(

@@ -9,10 +9,12 @@ import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.Card
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** ViewBinder for TabGridSecondaryItem. */
+@NullMarked
 class MessageCardViewBinder {
     public static void bind(PropertyModel model, ViewGroup view, PropertyKey propertyKey) {
         assert view instanceof MessageCardView;
@@ -55,6 +57,15 @@ class MessageCardViewBinder {
         } else if (MessageCardViewProperties.ACTION_BUTTON_VISIBLE == propertyKey) {
             itemView.setActionButtonVisible(
                     model.get(MessageCardViewProperties.ACTION_BUTTON_VISIBLE));
+        } else if (MessageCardViewProperties.LEFT_MARGIN_OVERRIDE_PX == propertyKey) {
+            itemView.setLeftMargin(model.get(MessageCardViewProperties.LEFT_MARGIN_OVERRIDE_PX));
+        } else if (MessageCardViewProperties.TOP_MARGIN_OVERRIDE_PX == propertyKey) {
+            itemView.setTopMargin(model.get(MessageCardViewProperties.TOP_MARGIN_OVERRIDE_PX));
+        } else if (MessageCardViewProperties.RIGHT_MARGIN_OVERRIDE_PX == propertyKey) {
+            itemView.setRightMargin(model.get(MessageCardViewProperties.RIGHT_MARGIN_OVERRIDE_PX));
+        } else if (MessageCardViewProperties.BOTTOM_MARGIN_OVERRIDE_PX == propertyKey) {
+            itemView.setBottomMargin(
+                    model.get(MessageCardViewProperties.BOTTOM_MARGIN_OVERRIDE_PX));
         }
     }
 

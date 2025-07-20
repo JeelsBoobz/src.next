@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.omnibox.suggestions;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.os.Handler;
 import android.view.KeyEvent;
@@ -11,8 +13,6 @@ import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.view.ViewCompat;
 
@@ -20,6 +20,9 @@ import org.chromium.base.Callback;
 import org.chromium.base.ObserverList;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.omnibox.DeferredIMEWindowInsetApplicationCallback;
 import org.chromium.chrome.browser.omnibox.LocationBarDataProvider;
@@ -34,7 +37,7 @@ import org.chromium.chrome.browser.omnibox.voice.VoiceRecognitionHandler;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.share.ShareDelegate;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabWindowManager;
+import org.chromium.chrome.browser.tabwindow.TabWindowManager;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
 import org.chromium.chrome.browser.util.KeyNavigationUtil;
 import org.chromium.components.omnibox.AutocompleteMatch;
@@ -55,17 +58,18 @@ import java.util.List;
 import java.util.Optional;
 
 /** Coordinator that handles the interactions with the autocomplete system. */
+@NullMarked
 public class AutocompleteCoordinator
         implements UrlFocusChangeListener, OmniboxSuggestionsVisualState {
-    private final @NonNull ViewGroup mParent;
-    private final @NonNull ObservableSupplier<Profile> mProfileSupplier;
-    private final @NonNull Callback<Profile> mProfileChangeCallback;
-    private final @NonNull AutocompleteMediator mMediator;
-    private final @NonNull Supplier<ModalDialogManager> mModalDialogManagerSupplier;
-    private final @NonNull OmniboxSuggestionsDropdownAdapter mAdapter;
-    private final @NonNull Optional<PreWarmingRecycledViewPool> mRecycledViewPool;
+    private final ViewGroup mParent;
+    private final ObservableSupplier<Profile> mProfileSupplier;
+    private final Callback<Profile> mProfileChangeCallback;
+    private final AutocompleteMediator mMediator;
+    private final Supplier<ModalDialogManager> mModalDialogManagerSupplier;
+    private final OmniboxSuggestionsDropdownAdapter mAdapter;
+    private final Optional<PreWarmingRecycledViewPool> mRecycledViewPool;
     private @Nullable OmniboxSuggestionsDropdown mDropdown;
-    private @NonNull ObserverList<OmniboxSuggestionsDropdownScrollListener> mScrollListenerList =
+    private final ObserverList<OmniboxSuggestionsDropdownScrollListener> mScrollListenerList =
             new ObserverList<>();
 
     /** An observer watching for changes to the visual state of the omnibox suggestions. */
@@ -78,26 +82,24 @@ public class AutocompleteCoordinator
     }
 
     public AutocompleteCoordinator(
-            @NonNull ViewGroup parent,
-            @NonNull AutocompleteDelegate delegate,
-            @NonNull OmniboxSuggestionsDropdownEmbedder dropdownEmbedder,
-            @NonNull UrlBarEditingTextStateProvider urlBarEditingTextProvider,
-            @NonNull Supplier<ModalDialogManager> modalDialogManagerSupplier,
-            @NonNull Supplier<Tab> activityTabSupplier,
-            @Nullable Supplier<ShareDelegate> shareDelegateSupplier,
-            @NonNull LocationBarDataProvider locationBarDataProvider,
-            @NonNull ObservableSupplier<Profile> profileObservableSupplier,
-            @NonNull Callback<Tab> bringToForegroundCallback,
-            @NonNull Supplier<TabWindowManager> tabWindowManagerSupplier,
-            @NonNull BookmarkState bookmarkState,
-            @NonNull OmniboxActionDelegate omniboxActionDelegate,
+            ViewGroup parent,
+            AutocompleteDelegate delegate,
+            OmniboxSuggestionsDropdownEmbedder dropdownEmbedder,
+            UrlBarEditingTextStateProvider urlBarEditingTextProvider,
+            Supplier<ModalDialogManager> modalDialogManagerSupplier,
+            Supplier<@Nullable Tab> activityTabSupplier,
+            Supplier<ShareDelegate> shareDelegateSupplier,
+            LocationBarDataProvider locationBarDataProvider,
+            ObservableSupplier<Profile> profileObservableSupplier,
+            Callback<Tab> bringToForegroundCallback,
+            Supplier<TabWindowManager> tabWindowManagerSupplier,
+            BookmarkState bookmarkState,
+            OmniboxActionDelegate omniboxActionDelegate,
             @Nullable OmniboxSuggestionsDropdownScrollListener scrollListener,
-            @NonNull ActivityLifecycleDispatcher lifecycleDispatcher,
+            ActivityLifecycleDispatcher lifecycleDispatcher,
             boolean forcePhoneStyleOmnibox,
-            @NonNull WindowAndroid windowAndroid,
-            @NonNull
-                    DeferredIMEWindowInsetApplicationCallback
-                            deferredIMEWindowInsetApplicationCallback) {
+            WindowAndroid windowAndroid,
+            DeferredIMEWindowInsetApplicationCallback deferredIMEWindowInsetApplicationCallback) {
         mParent = parent;
         mModalDialogManagerSupplier = modalDialogManagerSupplier;
         Context context = parent.getContext();
@@ -112,6 +114,7 @@ public class AutocompleteCoordinator
                                 DeviceFormFactor.isNonMultiDisplayContextOnTablet(context)
                                         && !forcePhoneStyleOmnibox)
                         .with(SuggestionListProperties.SUGGESTION_MODELS, listItems)
+                        .with(SuggestionListProperties.ACTIVITY_WINDOW_FOCUSED, true)
                         .build();
 
         mMediator =
@@ -201,12 +204,13 @@ public class AutocompleteCoordinator
 
     private ViewProvider<SuggestionListViewHolder> createViewProvider(
             boolean forcePhoneStyleOmnibox) {
-        return new ViewProvider<SuggestionListViewHolder>() {
+        return new ViewProvider<>() {
             private AsyncViewProvider<ViewGroup> mAsyncProvider;
-            private List<Callback<SuggestionListViewHolder>> mCallbacks = new ArrayList<>();
-            private SuggestionListViewHolder mHolder;
+            private final List<Callback<SuggestionListViewHolder>> mCallbacks = new ArrayList<>();
+            private @Nullable SuggestionListViewHolder mHolder;
 
             @Override
+            @Initializer
             public void inflate() {
                 AsyncViewStub stub =
                         mParent.getRootView().findViewById(R.id.omnibox_results_container_stub);
@@ -228,7 +232,7 @@ public class AutocompleteCoordinator
                 for (int i = 0; i < mCallbacks.size(); i++) {
                     mCallbacks.get(i).onResult(mHolder);
                 }
-                mCallbacks = null;
+                mCallbacks.clear();
             }
 
             @Override
@@ -282,7 +286,7 @@ public class AutocompleteCoordinator
      * @param index The index of the suggestion to fetch.
      * @return The suggestion at the given index.
      */
-    public AutocompleteMatch getSuggestionAt(int index) {
+    public @Nullable AutocompleteMatch getSuggestionAt(int index) {
         return mMediator.getSuggestionAt(index);
     }
 
@@ -337,32 +341,55 @@ public class AutocompleteCoordinator
 
         boolean isShowingList = mDropdown != null && mDropdown.getViewGroup().isShown();
 
-        // List of keys used to navigate the suggestions list.
-        boolean isSelectionKey =
-                (keyCode == KeyEvent.KEYCODE_DPAD_UP)
-                        || (keyCode == KeyEvent.KEYCODE_DPAD_DOWN)
-                        || (keyCode == KeyEvent.KEYCODE_TAB);
+        if (event.getKeyCode() == KeyEvent.KEYCODE_ESCAPE) {
+            if (isShowingList) {
+                mMediator.stopAutocomplete(true);
+            } else {
+                mMediator.finishInteraction();
+            }
+            return true;
+        }
 
-        if (isShowingList && event.getKeyCode() == KeyEvent.KEYCODE_ESCAPE) {
-            mMediator.finishInteraction();
-            return true;
+        // Always handle <ENTER> key, even if the suggestions list is not showing.
+        // This allows users to navigate to the typed url or query.
+        // Try to dispatch to suggestions list, if one is showing, otherwise invoke navigation.
+        if (KeyNavigationUtil.isEnter(event)) {
+            if (isShowingList
+                    && assumeNonNull(mDropdown).getViewGroup().onKeyDown(keyCode, event)) {
+                return true;
+            }
+
+            if (mParent.getVisibility() == View.VISIBLE) {
+                mMediator.loadTypedOmniboxText(
+                        event.getEventTime(), /* openInNewTab= */ event.isAltPressed());
+                return true;
+            }
+
+            return false;
         }
-        if (isShowingList && isSelectionKey) {
+
+        // Do not attempt to interpret any navigation keys when the suggestions list is not showing.
+        if (!isShowingList) {
+            return false;
+        }
+
+        // Do not attempt to interpret non-navigaton keys.
+        // There are cases where the SPACE key may gen inappropriately routed to the
+        // Suggestion, simulating press/long press of the UI element.
+        if ((keyCode == KeyEvent.KEYCODE_DPAD_UP)
+                || (keyCode == KeyEvent.KEYCODE_DPAD_DOWN)
+                || (keyCode == KeyEvent.KEYCODE_TAB)) {
             mMediator.allowPendingItemSelection();
-        }
-        if (isShowingList && mDropdown.getViewGroup().onKeyDown(keyCode, event)) {
+            assumeNonNull(mDropdown).getViewGroup().onKeyDown(keyCode, event);
             return true;
         }
-        if (KeyNavigationUtil.isEnter(event) && mParent.getVisibility() == View.VISIBLE) {
-            mMediator.loadTypedOmniboxText(event.getEventTime(), event.isAltPressed());
-            return true;
-        }
+
         return false;
     }
 
     /** Notify the Autocomplete about Omnibox text change. */
     public void onTextChanged(String textWithoutAutocomplete) {
-        mMediator.onTextChanged(textWithoutAutocomplete);
+        mMediator.onTextChanged(textWithoutAutocomplete, false);
     }
 
     /** Trigger autocomplete for the given query. */
@@ -394,8 +421,7 @@ public class AutocompleteCoordinator
      *     null if it is invoked before Native libraries are initialized, or if the Profile is
      *     invalid.
      */
-    public static @Nullable AutocompleteMatch classify(
-            @NonNull Profile profile, @NonNull String query) {
+    public static @Nullable AutocompleteMatch classify(Profile profile, String query) {
         return AutocompleteController.getForProfile(profile)
                 .map(a -> a.classify(query))
                 .orElse(null);
@@ -409,7 +435,7 @@ public class AutocompleteCoordinator
     /**
      * @return Suggestions Dropdown view, showing the list of suggestions.
      */
-    public OmniboxSuggestionsDropdown getSuggestionsDropdownForTest() {
+    public @Nullable OmniboxSuggestionsDropdown getSuggestionsDropdownForTest() {
         return mDropdown;
     }
 
@@ -427,7 +453,7 @@ public class AutocompleteCoordinator
         return mMediator.getSuggestionModelListForTest();
     }
 
-    public @NonNull ModalDialogManager getModalDialogManagerForTest() {
+    public ModalDialogManager getModalDialogManagerForTest() {
         return mModalDialogManagerSupplier.get();
     }
 

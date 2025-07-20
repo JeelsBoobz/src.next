@@ -22,9 +22,8 @@
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/native_widget_types.h"
-#include "url/gurl.h"
 
-namespace views {
+namespace ui {
 class NativeWindowTracker;
 }
 
@@ -52,17 +51,17 @@ class ExtensionUninstallDialog : public ChromeAppIconDelegate,
   class Delegate {
    public:
     // Called when the dialog closes.
-    // |did_start_uninstall| indicates whether the uninstall process for the
-    // extension started. If this is false, |error| will contain the reason.
+    // `did_start_uninstall` indicates whether the uninstall process for the
+    // extension started. If this is false, `error` will contain the reason.
     virtual void OnExtensionUninstallDialogClosed(bool did_start_uninstall,
                                                   const std::u16string& error) {
     }
 
    protected:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
   };
 
-  // Creates the Views implementation of ExtensionUninstallDialog. The dialog
+  // Creates the implementation of `ExtensionUninstallDialog`. The dialog
   // will be modal to `parent`, or a non-modal dialog if `parent` is NULL.
   static std::unique_ptr<ExtensionUninstallDialog>
   Create(Profile* profile, gfx::NativeWindow parent, Delegate* delegate);
@@ -115,7 +114,7 @@ class ExtensionUninstallDialog : public ChromeAppIconDelegate,
   gfx::NativeWindow parent() { return parent_; }
 
  private:
-  // Uninstalls the extension. Returns true on success, and populates |error| on
+  // Uninstalls the extension. Returns true on success, and populates `error` on
   // failure.
   bool Uninstall(std::u16string* error);
 
@@ -159,8 +158,8 @@ class ExtensionUninstallDialog : public ChromeAppIconDelegate,
 
   std::unique_ptr<ChromeAppIcon> icon_;
 
-  // Tracks whether |parent_| got destroyed.
-  std::unique_ptr<views::NativeWindowTracker> parent_window_tracker_;
+  // Tracks whether `parent_` got destroyed.
+  std::unique_ptr<ui::NativeWindowTracker> parent_window_tracker_;
 
   // Indicates that dialog was shown.
   bool dialog_shown_ = false;

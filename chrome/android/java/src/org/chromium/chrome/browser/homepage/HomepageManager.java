@@ -16,14 +16,13 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.chrome.browser.common.ChromeUrlConstants;
+import org.chromium.chrome.browser.homepage.settings.HomepageMetricsEnums.HomeButtonStatus;
 import org.chromium.chrome.browser.homepage.settings.HomepageMetricsEnums.HomepageLocationType;
 import org.chromium.chrome.browser.homepage.settings.HomepageSettings;
-import org.chromium.chrome.browser.new_tab_url.DseNewTabUrlManager;
 import org.chromium.chrome.browser.partnercustomizations.HomepageCharacterizationHelper;
 import org.chromium.chrome.browser.partnercustomizations.PartnerBrowserCustomizations;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
-import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.UrlUtilities;
@@ -103,7 +102,10 @@ public class HomepageManager
      * @return Whether or not homepage is enabled.
      */
     public boolean isHomepageEnabled() {
-        return HomepagePolicyManager.isHomepageManagedByPolicy() || getPrefHomepageEnabled();
+        if (HomepagePolicyManager.isShowHomeButtonManaged()) {
+            return HomepagePolicyManager.getShowHomeButtonValue();
+        }
+        return HomepagePolicyManager.isHomepageLocationManaged() || getPrefHomepageEnabled();
     }
 
     /**
@@ -116,8 +118,7 @@ public class HomepageManager
     /**
      * Get the current homepage URI. If the homepage is disabled, return an empty GURL; otherwise it
      * will always return a non-empty GURL. In cases when the homepage is specifically set as empty,
-     * this function will fallback to return {@link ChromeUrlConstants.nativeNtpGurl()}. If the
-     * default search engine (DSE) isn't Google, may fallback to the DSE's new Tab URL.
+     * this function will fallback to return {@link ChromeUrlConstants.nativeNtpGurl()}.
      *
      * <p>This function needs to be called on UI thread since
      * ProfileManager.getLastUsedRegularProfile() is called.
@@ -125,14 +126,22 @@ public class HomepageManager
      * <p>This function checks different sources to get the current homepage, which is listed below
      * according to their priority:
      *
-     * <p><b>isManagedByPolicy > useChromeNtp > useDefaultGurl > useCustomGurl</b>
+     * <p><b>HomepageIsNtpPolicy > HomepageLocationPolicy > useChromeNtp > useDefaultGurl >
+     * useCustomGurl</b>
+     *
+     * <p>Reference Priority Table: crbug.com/400800634#comment7
      *
      * @return A non-empty GURL, if homepage is enabled. An empty GURL otherwise.
-     * @see HomepagePolicyManager#isHomepageManagedByPolicy()
+     * @see HomepagePolicyManager#isHomepageLocationManaged()
      * @see #getPrefHomepageUseChromeNtp()
      * @see #getPrefHomepageUseDefaultUri()
      */
     public @Nullable GURL getHomepageGurl() {
+        // TODO (crbug.com/400800634): Confirm this behavior
+        if (HomepagePolicyManager.isHomepageNewTabPageEnabled()) {
+            return ChromeUrlConstants.nativeNtpGurl();
+        }
+
         if (!isHomepageEnabled()) return GURL.emptyGURL();
 
         GURL homepageGurl = getHomepageGurlIgnoringEnabledState();
@@ -140,14 +149,7 @@ public class HomepageManager
             homepageGurl = ChromeUrlConstants.nativeNtpGurl();
         }
 
-        // We have to use ProfileManager.getLastUsedRegularProfile() to get the last used regular
-        // Profile
-        // before HomepageManager supports multiple Profiles. Thus, if DSE isn't Google, pressing
-        // the home button may redirect to the DSE's new Tab URL, rather than showing an incognito
-        // NTP.
-        return DseNewTabUrlManager.maybeGetOverrideUrl(
-                homepageGurl,
-                ProfileManager.isInitialized() ? ProfileManager.getLastUsedRegularProfile() : null);
+        return homepageGurl;
     }
 
     /**
@@ -210,10 +212,14 @@ public class HomepageManager
 
     /**
      * Get homepage URI without checking if the homepage is enabled.
+     *
      * @return Homepage GURL based on policy and shared preference settings.
      */
     private @NonNull GURL getHomepageGurlIgnoringEnabledState() {
-        if (HomepagePolicyManager.isHomepageManagedByPolicy()) {
+        if (HomepagePolicyManager.isHomepageNewTabPageEnabled()) {
+            return ChromeUrlConstants.nativeNtpGurl();
+        }
+        if (HomepagePolicyManager.isHomepageLocationManaged()) {
             return HomepagePolicyManager.getHomepageUrl();
         }
         if (getPrefHomepageUseChromeNtp()) {
@@ -269,9 +275,9 @@ public class HomepageManager
     }
 
     /**
-     * True if the homepage URL is the default value. False means the homepage URL is using
-     * the user customized URL. Note that this method does not take enterprise policy into account.
-     * Use {@link HomepagePolicyManager#isHomepageManagedByPolicy} if policy information is needed.
+     * True if the homepage URL is the default value. False means the homepage URL is using the user
+     * customized URL. Note that this method does not take enterprise policy into account. Use
+     * {@link HomepagePolicyManager#isHomepageLocationManaged} if policy information is needed.
      *
      * @return Whether if the homepage URL is the default value.
      */
@@ -349,7 +355,10 @@ public class HomepageManager
      */
     @VisibleForTesting
     public @HomepageLocationType int getHomepageLocationType() {
-        if (HomepagePolicyManager.isHomepageManagedByPolicy()) {
+        if (HomepagePolicyManager.isHomepageNewTabPageEnabled()) {
+            return HomepageLocationType.POLICY_NTP;
+        }
+        if (HomepagePolicyManager.isHomepageLocationManaged()) {
             return UrlUtilities.isNtpUrl(HomepagePolicyManager.getHomepageUrl())
                     ? HomepageLocationType.POLICY_NTP
                     : HomepageLocationType.POLICY_OTHER;
@@ -372,6 +381,35 @@ public class HomepageManager
         return UrlUtilities.isNtpUrl(getPrefHomepageCustomGurl())
                 ? HomepageLocationType.USER_CUSTOMIZED_NTP
                 : HomepageLocationType.USER_CUSTOMIZED_OTHER;
+    }
+
+    /**
+     * Record histogram "Settings.Homepage.HomeButtonStatus" with the current homepage location
+     * type.
+     */
+    public void recordHomepageButtonStatus() {
+        int homeButtonStatus = getHomeButtonStatus();
+        RecordHistogram.recordEnumeratedHistogram(
+                "Settings.Homepage.HomeButtonStatus",
+                homeButtonStatus,
+                HomeButtonStatus.NUM_ENTRIES);
+    }
+
+    /**
+     * @return {@link HomeButtonStatus} for current homepage settings.
+     */
+    @VisibleForTesting
+    public @HomeButtonStatus int getHomeButtonStatus() {
+        if (HomepagePolicyManager.isShowHomeButtonManaged()) {
+            return HomepagePolicyManager.getShowHomeButtonValue()
+                    ? HomeButtonStatus.POLICY_ON
+                    : HomeButtonStatus.POLICY_OFF;
+        }
+        if (HomepagePolicyManager.isHomepageLocationManaged()
+                || HomepagePolicyManager.isHomepageNewTabPageManaged()) {
+            return HomeButtonStatus.POLICY_ON;
+        }
+        return getPrefHomepageEnabled() ? HomeButtonStatus.USER_ON : HomeButtonStatus.USER_OFF;
     }
 
     @Override

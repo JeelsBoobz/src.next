@@ -4,7 +4,6 @@
 
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
-import 'chrome://resources/cr_elements/cr_icons.css.js';
 import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_toggle/cr_toggle.js';
 import 'chrome://resources/cr_elements/cr_tooltip/cr_tooltip.js';
@@ -13,6 +12,7 @@ import 'chrome://resources/cr_elements/policy/cr_tooltip_icon.js';
 import 'chrome://resources/js/action_link.js';
 import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import './host_permissions_toggle_list.js';
+import './icons.html.js';
 import './runtime_host_permissions.js';
 import '/strings.m.js';
 import './toggle_row.js';
@@ -34,7 +34,7 @@ import {getHtml} from './detail_view.html.js';
 import type {ItemDelegate} from './item.js';
 import {DummyItemDelegate} from './item.js';
 import {ItemMixin} from './item_mixin.js';
-import {computeInspectableViewLabel, convertSafetyCheckReason, createDummyExtensionInfo, EnableControl, getEnableControl, getEnableToggleAriaLabel, getEnableToggleTooltipText, getItemSource, getItemSourceString, isEnabled, SAFETY_HUB_EXTENSION_KEPT_HISTOGRAM_NAME, SAFETY_HUB_EXTENSION_REMOVED_HISTOGRAM_NAME, SAFETY_HUB_WARNING_REASON_MAX_SIZE, sortViews, userCanChangeEnablement} from './item_util.js';
+import {computeInspectableViewLabel, convertSafetyCheckReason, createDummyExtensionInfo, EnableControl, getEnableControl, getEnableToggleAriaLabel, getEnableToggleTooltipText, getItemSource, getItemSourceString, isEnabled, SAFETY_HUB_EXTENSION_KEPT_HISTOGRAM_NAME, SAFETY_HUB_EXTENSION_REMOVED_HISTOGRAM_NAME, SAFETY_HUB_WARNING_REASON_MAX_SIZE, sortViews, UPLOAD_EXTENSION_TO_ACCOUNT_DETAILS_VIEW_PAGE_HISTOGRAM_NAME, userCanChangeEnablement} from './item_util.js';
 import type {Mv2DeprecationDelegate} from './mv2_deprecation_delegate.js';
 import {getMv2ExperimentStage, Mv2ExperimentStage} from './mv2_deprecation_util.js';
 import {navigation, Page} from './navigation_helper.js';
@@ -121,17 +121,19 @@ export class ExtensionsDetailViewElement extends
     };
   }
 
-  data: chrome.developerPrivate.ExtensionInfo = createDummyExtensionInfo();
-  delegate: ItemDelegate&Mv2DeprecationDelegate = new DummyDetailViewDelegate();
-  inDevMode: boolean = false;
-  enableEnhancedSiteControls: boolean = false;
-  incognitoAvailable: boolean = false;
-  showActivityLog: boolean = false;
-  fromActivityLog: boolean = false;
-  protected showSafetyCheck_: boolean = false;
-  protected size_: string = '';
-  protected sortedViews_: chrome.developerPrivate.ExtensionView[] = [];
-  private mv2ExperimentStage_: Mv2ExperimentStage =
+  accessor data: chrome.developerPrivate.ExtensionInfo =
+      createDummyExtensionInfo();
+  accessor delegate: ItemDelegate&Mv2DeprecationDelegate =
+      new DummyDetailViewDelegate();
+  accessor inDevMode: boolean = false;
+  accessor enableEnhancedSiteControls: boolean = false;
+  accessor incognitoAvailable: boolean = false;
+  accessor showActivityLog: boolean = false;
+  accessor fromActivityLog: boolean = false;
+  protected accessor showSafetyCheck_: boolean = false;
+  protected accessor size_: string = '';
+  protected accessor sortedViews_: chrome.developerPrivate.ExtensionView[] = [];
+  private accessor mv2ExperimentStage_: Mv2ExperimentStage =
       getMv2ExperimentStage(loadTimeData.getInteger('MV2ExperimentStage'));
 
   override firstUpdated() {
@@ -238,13 +240,18 @@ export class ExtensionsDetailViewElement extends
   protected hasSevereWarnings_(): boolean {
     return this.data.disableReasons.corruptInstall ||
         this.data.disableReasons.suspiciousInstall ||
-        this.data.disableReasons.updateRequired || !!this.data.blocklistText ||
         this.data.disableReasons.publishedInStoreRequired ||
+        this.data.disableReasons.unsupportedDeveloperExtension ||
+        this.data.disableReasons.updateRequired || !!this.data.blocklistText ||
         this.data.runtimeWarnings.length > 0;
   }
 
-  protected computeDevReloadButtonHidden_(): boolean {
-    return !this.canReloadItem();
+  protected showAccountUploadButton_(): boolean {
+    return this.data.canUploadAsAccountExtension;
+  }
+
+  protected showDevReloadButton_(): boolean {
+    return this.canReloadItem();
   }
 
   protected computeEnabledStyle_(): string {
@@ -279,6 +286,10 @@ export class ExtensionsDetailViewElement extends
     return this.data.incognitoAccess.isEnabled && this.incognitoAvailable;
   }
 
+  protected showUserScriptSectionToggle_(): boolean {
+    return this.data.userScriptsAccess.isEnabled;
+  }
+
   protected onEnableToggleChange_() {
     this.delegate.setItemEnabled(this.data.id, this.$.enableToggle.checked);
     this.$.enableToggle.checked = this.isEnabled_();
@@ -295,6 +306,12 @@ export class ExtensionsDetailViewElement extends
 
   protected onReloadClick_() {
     this.reloadItem().catch((loadError) => this.fire('load-error', loadError));
+  }
+
+  protected async onUploadClick_() {
+    const uploaded = await this.delegate.uploadItemToAccount(this.data.id);
+    chrome.metricsPrivate.recordBoolean(
+        UPLOAD_EXTENSION_TO_ACCOUNT_DETAILS_VIEW_PAGE_HISTOGRAM_NAME, uploaded);
   }
 
   protected onRemoveClick_() {
@@ -364,7 +381,7 @@ export class ExtensionsDetailViewElement extends
   protected onPinnedToToolbarChange_() {
     this.delegate.setItemPinnedToToolbar(
         this.data.id,
-        this.shadowRoot!
+        this.shadowRoot
             .querySelector<ExtensionsToggleRowElement>(
                 '#pin-to-toolbar')!.checked);
   }
@@ -372,23 +389,49 @@ export class ExtensionsDetailViewElement extends
   protected onAllowIncognitoChange_() {
     this.delegate.setItemAllowedIncognito(
         this.data.id,
-        this.shadowRoot!
+        this.shadowRoot
             .querySelector<ExtensionsToggleRowElement>(
                 '#allow-incognito')!.checked);
+
+    if (this.data.controlledInfo) {
+      // If admin-installed, the change might be postponed until Chromium
+      // restarts.
+      this.data = {
+        ...this.data,
+        incognitoAccessPendingChange: !this.data.incognitoAccessPendingChange,
+      };
+    }
+  }
+
+  protected onAllowUserScriptsChange_() {
+    this.delegate.setItemAllowedUserScripts(
+        this.data.id,
+        this.shadowRoot
+            .querySelector<ExtensionsToggleRowElement>(
+                '#allow-user-scripts')!.checked);
   }
 
   protected onAllowOnFileUrlsChange_() {
     this.delegate.setItemAllowedOnFileUrls(
         this.data.id,
-        this.shadowRoot!
+        this.shadowRoot
             .querySelector<ExtensionsToggleRowElement>(
                 '#allow-on-file-urls')!.checked);
+
+    if (this.data.controlledInfo) {
+      // If admin-installed, the change might be postponed until Chromium
+      // restarts.
+      this.data = {
+        ...this.data,
+        fileAccessPendingChange: !this.data.fileAccessPendingChange,
+      };
+    }
   }
 
   protected onCollectErrorsChange_() {
     this.delegate.setItemCollectsErrors(
         this.data.id,
-        this.shadowRoot!
+        this.shadowRoot
             .querySelector<ExtensionsToggleRowElement>(
                 '#collect-errors')!.checked);
   }
@@ -463,7 +506,7 @@ export class ExtensionsDetailViewElement extends
 
   protected onShowAccessRequestsChange_() {
     const showAccessRequestsToggle =
-        this.shadowRoot!.querySelector<ExtensionsToggleRowElement>(
+        this.shadowRoot.querySelector<ExtensionsToggleRowElement>(
             '#show-access-requests-toggle');
     assert(showAccessRequestsToggle);
     this.delegate.setShowAccessRequestsInToolbar(
@@ -475,9 +518,6 @@ export class ExtensionsDetailViewElement extends
   }
 
   private computeShowSafetyCheck_(): boolean {
-    if (!loadTimeData.getBoolean('safetyCheckShowReviewPanel')) {
-      return false;
-    }
     const ExtensionType = chrome.developerPrivate.ExtensionType;
     // Check to make sure this is an extension and not a Chrome app.
     if (!(this.data.type === ExtensionType.EXTENSION ||
@@ -580,6 +620,15 @@ export class ExtensionsDetailViewElement extends
     return !this.showSafetyCheck_ && !!this.data.blocklistText;
   }
 
+  /**
+   * Shows only one text if both unsupported developer extension and safety
+   * check texts are present. Safety check text takes precedence.
+   */
+  protected shouldShowUnsupportedDeveloperExtensionText_(): boolean {
+    return !this.showSafetyCheck_ &&
+        this.data.disableReasons.unsupportedDeveloperExtension;
+  }
+
   protected showRepairButton_(): boolean {
     return getEnableControl(this.data) === EnableControl.REPAIR;
   }
@@ -666,7 +715,7 @@ export class ExtensionsDetailViewElement extends
   /**
    * Returns the HTML representation of the Manifest V2 deprecation message
    * subtitle string. We need the HTML representation instead of the string
-   * since the string holds a link.
+   * since the string holds substitutions.
    */
   protected getMv2DeprecationMessageSubtitle_(): TrustedHTML {
     switch (this.mv2ExperimentStage_) {
@@ -674,8 +723,11 @@ export class ExtensionsDetailViewElement extends
         return window.trustedTypes!.emptyHTML;
       case Mv2ExperimentStage.WARNING:
         return this.i18nAdvanced('mv2DeprecationMessageWarningSubtitle', {
-          substitutions:
-              ['https://chromewebstore.google.com/category/extensions'],
+          substitutions: [
+            'https://chromewebstore.google.com/category/extensions',
+            this.i18n('opensInNewTab'),
+          ],
+          attrs: ['aria-description'],
         });
       case Mv2ExperimentStage.DISABLE_WITH_REENABLE:
       case Mv2ExperimentStage.UNSUPPORTED:
@@ -683,7 +735,9 @@ export class ExtensionsDetailViewElement extends
           substitutions: [
             'https://support.google.com/chrome_webstore' +
                 '?p=unsupported_extensions',
+            this.i18n('opensInNewTab'),
           ],
+          attrs: ['aria-description'],
         });
       default:
         assertNotReached();

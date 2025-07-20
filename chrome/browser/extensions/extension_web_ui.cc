@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <iterator>
 #include <set>
 #include <string>
@@ -15,7 +16,6 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -191,9 +191,9 @@ void UnregisterAndReplaceOverrideForWebContents(const std::string& page,
       ui::PAGE_TRANSITION_RELOAD, std::string());
 }
 
-enum UpdateBehavior {
-  UPDATE_DEACTIVATE,  // Mark 'active' as false.
-  UPDATE_REMOVE,      // Remove the entry from the list.
+enum class UpdateBehavior {
+  kDeactivate,  // Mark 'active' as false.
+  kRemove,      // Remove the entry from the list.
 };
 
 // Updates the entry (if any) for |override_url| in |overrides_list| according
@@ -201,7 +201,7 @@ enum UpdateBehavior {
 bool UpdateOverridesList(base::Value::List& overrides_list,
                          const std::string& override_url,
                          UpdateBehavior behavior) {
-  auto iter = base::ranges::find_if(
+  auto iter = std::ranges::find_if(
       overrides_list, [&override_url](const base::Value& value) {
         if (!value.is_dict())
           return false;
@@ -212,7 +212,7 @@ bool UpdateOverridesList(base::Value::List& overrides_list,
     return false;
 
   switch (behavior) {
-    case UPDATE_DEACTIVATE: {
+    case UpdateBehavior::kDeactivate: {
       // See comment about CHECK(success) in ForEachOverrideList.
       if (iter->is_dict()) {
         iter->GetDict().Set(kActive, false);
@@ -221,7 +221,7 @@ bool UpdateOverridesList(base::Value::List& overrides_list,
       // Else fall through and erase the broken pref.
       [[fallthrough]];
     }
-    case UPDATE_REMOVE:
+    case UpdateBehavior::kRemove:
       overrides_list.erase(iter);
       break;
   }
@@ -245,7 +245,7 @@ void UpdateOverridesLists(Profile* profile,
       // uninstalling an externally loaded extension, which has not been enabled
       // once.
       // But if it's being deactivated, it should already be in the list.
-      DCHECK_NE(behavior, UPDATE_DEACTIVATE);
+      DCHECK_NE(behavior, UpdateBehavior::kDeactivate);
       continue;
     }
     if (UpdateOverridesList(*page_overrides, page_override_pair.second.spec(),
@@ -255,6 +255,7 @@ void UpdateOverridesLists(Profile* profile,
       base::RepeatingCallback<void(WebContents*)> callback =
           base::BindRepeating(&UnregisterAndReplaceOverrideForWebContents,
                               page_override_pair.first, profile);
+      // Apply to all existing tabs.
       extensions::ExtensionTabUtil::ForEachTab(callback);
     }
   }
@@ -549,14 +550,14 @@ void ExtensionWebUI::RegisterOrActivateChromeURLOverrides(
 void ExtensionWebUI::DeactivateChromeURLOverrides(
     Profile* profile,
     const URLOverrides::URLOverrideMap& overrides) {
-  UpdateOverridesLists(profile, overrides, UPDATE_DEACTIVATE);
+  UpdateOverridesLists(profile, overrides, UpdateBehavior::kDeactivate);
 }
 
 // static
 void ExtensionWebUI::UnregisterChromeURLOverrides(
     Profile* profile,
     const URLOverrides::URLOverrideMap& overrides) {
-  UpdateOverridesLists(profile, overrides, UPDATE_REMOVE);
+  UpdateOverridesLists(profile, overrides, UpdateBehavior::kRemove);
 }
 
 // static
@@ -586,10 +587,10 @@ void ExtensionWebUI::GetFaviconForURL(
     if (!icon_resource.empty()) {
       ui::ResourceScaleFactor resource_scale_factor =
           ui::GetSupportedResourceScaleFactor(scale);
-      info_list.push_back(extensions::ImageLoader::ImageRepresentation(
+      info_list.emplace_back(
           icon_resource,
           extensions::ImageLoader::ImageRepresentation::ALWAYS_RESIZE,
-          gfx::Size(pixel_size, pixel_size), resource_scale_factor));
+          gfx::Size(pixel_size, pixel_size), resource_scale_factor);
     }
   }
 

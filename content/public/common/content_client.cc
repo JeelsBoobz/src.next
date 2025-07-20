@@ -8,13 +8,13 @@
 
 #include "base/memory/ref_counted_memory.h"
 #include "base/no_destructor.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "content/public/common/origin_util.h"
-#include "content/public/common/user_agent.h"
 #include "ui/gfx/image/image.h"
 
 namespace content {
@@ -95,10 +95,6 @@ ContentClient::ContentClient()
 ContentClient::~ContentClient() {
 }
 
-std::vector<url::Origin> ContentClient::GetPdfInternalPluginAllowedOrigins() {
-  return {};
-}
-
 std::u16string ContentClient::GetLocalizedString(int message_id) {
   return std::u16string();
 }
@@ -159,5 +155,14 @@ media::MediaDrmBridgeClient* ContentClient::GetMediaDrmBridgeClient() {
 void ContentClient::ExposeInterfacesToBrowser(
     scoped_refptr<base::SequencedTaskRunner> io_task_runner,
     mojo::BinderMap* binders) {}
+
+bool ContentClient::ShouldAllowDefaultSiteInstanceGroup() {
+  return true;
+}
+
+bool ContentClient::IsFilePickerAllowedForCrossOriginSubframe(
+    const url::Origin& origin) {
+  return false;
+}
 
 }  // namespace content

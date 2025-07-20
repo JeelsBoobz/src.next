@@ -39,10 +39,6 @@
 #include "base/enterprise_util.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS)
-#include "chrome/browser/ash/crosapi/browser_util.h"
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
 namespace extensions {
 namespace {
 // Returns true if extensions_ids contains a list of valid extension ids,
@@ -72,6 +68,7 @@ bool IsValidUpdateUrl(const std::string& update_url) {
 }
 
 }  // namespace
+
 // ExtensionListPolicyHandler implementation -----------------------------------
 
 ExtensionListPolicyHandler::ExtensionListPolicyHandler(const char* policy_name,
@@ -224,6 +221,9 @@ void ExtensionInstallBlockListPolicyHandler::ApplyPolicySettings(
   list_handler_.ApplyPolicySettings(policies, prefs);
 }
 
+// TODO(crbug.com/394876083): Support more extension policy handlers on desktop
+// Android.
+#if !BUILDFLAG(IS_ANDROID)
 // ExtensionURLPatternListPolicyHandler implementation -------------------------
 
 ExtensionURLPatternListPolicyHandler::ExtensionURLPatternListPolicyHandler(
@@ -287,6 +287,7 @@ void ExtensionURLPatternListPolicyHandler::ApplyPolicySettings(
     prefs->SetValue(pref_path_, value->Clone());
   }
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 // ExtensionSettingsPolicyHandler implementation  ------------------------------
 

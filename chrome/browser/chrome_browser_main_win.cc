@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/chrome_browser_main_win.h"
 
@@ -18,35 +14,38 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/base_switches.h"
+#include "base/check.h"
 #include "base/command_line.h"
 #include "base/dcheck_is_on.h"
 #include "base/enterprise_util.h"
-#include "base/environment.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer_cleaner.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/i18n/rtl.h"
 #include "base/location.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
+#include "base/notreached.h"
 #include "base/path_service.h"
 #include "base/scoped_native_library.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "base/types/expected.h"
 #include "base/version.h"
+#include "base/win/elevation_util.h"
 #include "base/win/pe_image.h"
 #include "base/win/win_util.h"
 #include "base/win/wrapped_window_proc.h"
@@ -58,7 +57,10 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/platform_auth/platform_auth_policy_observer.h"
 #include "chrome/browser/first_run/first_run.h"
+#include "chrome/browser/first_run/upgrade_util.h"
+#include "chrome/browser/first_run/upgrade_util_win.h"
 #include "chrome/browser/performance_manager/public/dll_pre_read_policy_win.h"
+#include "chrome/browser/platform_experience/prefs.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/shell_integration_win.h"
@@ -130,8 +132,8 @@
 #include "ui/strings/grit/app_locale_settings.h"
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-#include "chrome/browser/win/conflicts/third_party_conflicts_manager.h"
-#endif
+#include "chrome/browser/platform_experience/installer/installer_win.h"
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 namespace {
 
@@ -173,15 +175,12 @@ void DelayedRecordProcessorMetrics() {
 
 // Initializes the ModuleDatabase on its owning sequence. Also starts the
 // enumeration of registered modules in the Windows Registry.
-void InitializeModuleDatabase(
-    bool is_third_party_blocking_policy_enabled) {
+void InitializeModuleDatabase() {
   DCHECK(ModuleDatabase::GetTaskRunner()->RunsTasksInCurrentSequence());
 
-  ModuleDatabase::SetInstance(
-      std::make_unique<ModuleDatabase>(is_third_party_blocking_policy_enabled));
+  ModuleDatabase::SetInstance(std::make_unique<ModuleDatabase>());
 
   auto* module_database = ModuleDatabase::GetInstance();
-  module_database->StartDrainingModuleLoadAttemptsLog();
 
   // Enumerate shell extensions and input method editors. It is safe to use
   // base::Unretained() here because the ModuleDatabase is never freed.
@@ -333,7 +332,7 @@ bool TryGetModuleTimeDateStamp(void* module_load_address,
 }
 
 void ShowCloseBrowserFirstMessageBox() {
-  chrome::ShowWarningMessageBox(
+  chrome::ShowWarningMessageBoxAsync(
       nullptr, l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
       l10n_util::GetStringUTF16(IDS_UNINSTALL_CLOSE_APP));
 }
@@ -486,15 +485,15 @@ int DoUninstallTasks(bool chrome_still_running) {
   // check once again after user acknowledges Uninstall dialog.
   if (chrome_still_running) {
     ShowCloseBrowserFirstMessageBox();
-    return chrome::RESULT_CODE_UNINSTALL_CHROME_ALIVE;
+    return CHROME_RESULT_CODE_UNINSTALL_CHROME_ALIVE;
   }
   int result = chrome::ShowUninstallBrowserPrompt();
   if (browser_util::IsBrowserAlreadyRunning()) {
     ShowCloseBrowserFirstMessageBox();
-    return chrome::RESULT_CODE_UNINSTALL_CHROME_ALIVE;
+    return CHROME_RESULT_CODE_UNINSTALL_CHROME_ALIVE;
   }
 
-  if (result != chrome::RESULT_CODE_UNINSTALL_USER_CANCEL) {
+  if (result != CHROME_RESULT_CODE_UNINSTALL_USER_CANCEL) {
     // The following actions are just best effort.
     VLOG(1) << "Executing uninstall actions";
     // Remove shortcuts targeting chrome.exe or chrome_proxy.exe.
@@ -517,6 +516,33 @@ ChromeBrowserMainPartsWin::ChromeBrowserMainPartsWin(bool is_integration_test,
     : ChromeBrowserMainParts(is_integration_test, startup_data) {}
 
 ChromeBrowserMainPartsWin::~ChromeBrowserMainPartsWin() = default;
+
+int ChromeBrowserMainPartsWin::PreEarlyInitialization() {
+  if (const int result = ChromeBrowserMainParts::PreEarlyInitialization();
+      result != content::RESULT_CODE_NORMAL_EXIT) {
+    return result;
+  }
+
+  // If we are running stale binaries then relaunch and exit immediately.
+  if (upgrade_util::IsRunningOldChrome()) {
+    if (!upgrade_util::RelaunchChromeBrowser(
+            *base::CommandLine::ForCurrentProcess())) {
+      // The relaunch failed. Feel free to panic now.
+      DUMP_WILL_BE_NOTREACHED();
+    }
+
+    // Note, cannot return RESULT_CODE_NORMAL_EXIT here as this code needs to
+    // result in browser startup bailing.
+    return CHROME_RESULT_CODE_NORMAL_EXIT_UPGRADE_RELAUNCHED;
+  }
+
+  // Requires FeatureList and may restart the browser.
+  if (auto deelevate_result = MaybeAutoDeElevate()) {
+    return *deelevate_result;
+  }
+
+  return content::RESULT_CODE_NORMAL_EXIT;
+}
 
 void ChromeBrowserMainPartsWin::ToolkitInitialized() {
   DCHECK_NE(base::PlatformThread::CurrentId(), base::kInvalidThreadId);
@@ -713,6 +739,17 @@ void ChromeBrowserMainPartsWin::PostBrowserStart() {
   g_browser_process->local_state()->SetBoolean(
       prefs::kOsUpdateHandlerEnabled,
       base::FeatureList::IsEnabled(features::kRegisterOsUpdateHandlerWin));
+  if (base::FeatureList::IsEnabled(
+          features::kInstallPlatformExperienceHelperWin)) {
+    base::ThreadPool::PostTask(
+        FROM_HERE,
+        {base::TaskPriority::BEST_EFFORT, base::MayBlock(),
+         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+        base::BindOnce(
+            &platform_experience::MaybeInstallPlatformExperienceHelper));
+    platform_experience::prefs::SetPrefOverrides(
+        *g_browser_process->local_state());
+  }
 #endif  // GOOGLE_CHROME_BRANDING
 
   // Record the parent process at a low priority.
@@ -721,40 +758,6 @@ void ChromeBrowserMainPartsWin::PostBrowserStart() {
       base::BindOnce(&ReportParentProcessName));
 
   base::ImportantFileWriterCleaner::GetInstance().Start();
-}
-
-// static
-void ChromeBrowserMainPartsWin::PrepareRestartOnCrashEnviroment(
-    const base::CommandLine& parsed_command_line) {
-  // Clear this var so child processes don't show the dialog by default.
-  std::unique_ptr<base::Environment> env(base::Environment::Create());
-  env->UnSetVar(env_vars::kShowRestart);
-
-  // For non-interactive tests we don't restart on crash.
-  if (env->HasVar(env_vars::kHeadless))
-    return;
-
-  // If the known command-line test options are used we don't create the
-  // environment block which means we don't get the restart dialog.
-  if (parsed_command_line.HasSwitch(switches::kBrowserCrashTest) ||
-      parsed_command_line.HasSwitch(switches::kNoErrorDialogs))
-    return;
-
-  // The encoding we use for the info is "title|context|direction" where
-  // direction is either env_vars::kRtlLocale or env_vars::kLtrLocale depending
-  // on the current locale.
-  std::u16string dlg_strings(
-      l10n_util::GetStringUTF16(IDS_CRASH_RECOVERY_TITLE));
-  dlg_strings.push_back('|');
-  std::u16string adjusted_string(
-      l10n_util::GetStringUTF16(IDS_CRASH_RECOVERY_CONTENT));
-  base::i18n::AdjustStringForLocaleDirection(&adjusted_string);
-  dlg_strings.append(adjusted_string);
-  dlg_strings.push_back('|');
-  dlg_strings.append(base::ASCIIToUTF16(
-      base::i18n::IsRTL() ? env_vars::kRtlLocale : env_vars::kLtrLocale));
-
-  env->SetVar(env_vars::kRestartInfo, base::UTF16ToUTF8(dlg_strings));
 }
 
 // static
@@ -807,7 +810,7 @@ int ChromeBrowserMainPartsWin::HandleIconsCommands(
     return content::RESULT_CODE_NORMAL_EXIT;
   }
   // We don't hide icons so we shouldn't do anything special to show them
-  return chrome::RESULT_CODE_UNSUPPORTED_PARAM;
+  return CHROME_RESULT_CODE_UNSUPPORTED_PARAM;
 }
 
 // static
@@ -962,37 +965,62 @@ void ChromeBrowserMainPartsWin::SetupModuleDatabase(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(module_watcher);
 
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  // Explicitly disable the third-party modules blocking.
-  //
-  // Because the blocking code lives in chrome_elf, it is not possible to check
-  // the feature (via the FeatureList API) or the policy to control whether it
-  // is enabled or not.
-  //
-  // What truly controls if the blocking is enabled is the presence of the
-  // module blocklist cache file. This means that to disable the feature, the
-  // cache must be deleted and the browser relaunched.
-  if (!ModuleDatabase::IsThirdPartyBlockingPolicyEnabled() ||
-      !ModuleBlocklistCacheUpdater::IsBlockingEnabled())
-    ThirdPartyConflictsManager::DisableThirdPartyModuleBlocking(
-        base::ThreadPool::CreateTaskRunner(
-            {base::TaskPriority::BEST_EFFORT,
-             base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN,
-             base::MayBlock()})
-            .get());
-#endif
-
-  bool third_party_blocking_policy_enabled =
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-      ModuleDatabase::IsThirdPartyBlockingPolicyEnabled();
-#else
-      false;
-#endif
-
   ModuleDatabase::GetTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(&InitializeModuleDatabase,
-                                third_party_blocking_policy_enabled));
+      FROM_HERE, base::BindOnce(&InitializeModuleDatabase));
 
   *module_watcher = ModuleWatcher::Create(base::BindRepeating(
       &ChromeBrowserMainPartsWin::OnModuleEvent, base::Unretained(this)));
+}
+
+// Check if the browser process is launching elevated, and attempt to
+// automatically de-elevate.
+std::optional<int> ChromeBrowserMainPartsWin::MaybeAutoDeElevate() {
+  // Do not de-elevate in an integration test.
+  if (is_integration_test()) {
+    return std::nullopt;
+  }
+
+  if (!base::FeatureList::IsEnabled(features::kAutoDeElevate)) {
+    return std::nullopt;
+  }
+
+  // Don't bother trying when UAC is disabled because it won't work anyway.
+  if (!base::win::UserAccountIsUnnecessarilyElevated()) {
+    return std::nullopt;
+  }
+
+  const char* const kNoRestartSwitches[] = {
+      // Do not interfere with automation scenarios, which might want to launch
+      // Chrome elevated.
+      switches::kEnableAutomation,
+      // Never attempt to de-elevate a second time.
+      switches::kDoNotDeElevateOnLaunch};
+  if (std::ranges::any_of(
+          kNoRestartSwitches,
+          [command_line = base::CommandLine::ForCurrentProcess()](
+              const char* no_restart_switch) {
+            return command_line->HasSwitch(no_restart_switch);
+          })) {
+    return std::nullopt;
+  }
+
+  base::CommandLine new_command_line(*base::CommandLine::ForCurrentProcess());
+  // Give a fully qualified .exe name
+  base::FilePath full_exe_name;
+  if (base::PathService::Get(base::FILE_EXE, &full_exe_name)) {
+    new_command_line.SetProgram(full_exe_name);
+  }
+  new_command_line.AppendSwitch(switches::kDoNotDeElevateOnLaunch);
+
+  auto process_or_error = base::win::RunDeElevated(new_command_line);
+  const HRESULT hr = process_or_error.has_value()
+                         ? S_OK
+                         : HRESULT_FROM_WIN32(process_or_error.error());
+  base::UmaHistogramSparse("Windows.AutoDeElevateResult", hr);
+  // If it fails, it doesn't matter why, just proceed with the normal launch.
+  if (SUCCEEDED(hr)) {
+    return CHROME_RESULT_CODE_NORMAL_EXIT_AUTO_DE_ELEVATED;
+  }
+
+  return std::nullopt;
 }

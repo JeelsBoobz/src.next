@@ -16,7 +16,6 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -38,7 +37,7 @@ namespace {
 // Current version number. We write databases at the "current" version number,
 // but any previous version that can read the "compatible" one can make do with
 // our database without *too* many bad effects.
-const int kCurrentVersionNumber = 69;
+const int kCurrentVersionNumber = 70;
 const int kCompatibleVersionNumber = 16;
 
 const char kEarlyExpirationThresholdKey[] = "early_expiration_threshold";
@@ -83,28 +82,26 @@ HistoryDatabase::HistoryDatabase(
     DownloadInterruptReason download_interrupt_reason_crash)
     : DownloadDatabase(download_interrupt_reason_none,
                        download_interrupt_reason_crash),
-      db_({// Note that we don't set exclusive locking here. That's done by
-           // BeginExclusiveMode below which is called later (we have to be in
-           // shared mode to start out for the in-memory backend to read the
-           // data).
-           // TODO(crbug.com/40159106) Remove this dependency on normal locking
-           // mode.
-           .exclusive_locking = false,
-           // Set the database page size to something a little larger to give us
-           // better performance (we're typically seek rather than bandwidth
-           // limited). Must be a power of 2 and a max of 65536.
-           .page_size = 4096,
-           // Set the cache size. The page size, plus a little extra, times this
-           // value, tells us how much memory the cache will use maximum.
-           // 1000 * 4kB = 4MB
-           .cache_size = 1000}),
+      db_(sql::DatabaseOptions()
+              // Note that we don't set exclusive locking here. That's done by
+              // BeginExclusiveMode below which is called later (we have to be
+              // in shared mode to start out for the in-memory backend to read
+              // the data).
+              // TODO(crbug.com/40159106) Remove this dependency on normal
+              // locking mode.
+              .set_exclusive_locking(false)
+              // Prime the cache.
+              .set_preload(true)
+              // Set the cache size. The page size, plus a little extra, times
+              // this value, tells us how much memory the cache will use
+              // maximum. 1000 * 4kB = 4MB
+              .set_cache_size(1000),
+          /*tag=*/"History"),
       history_metadata_db_(&db_, &meta_table_) {}
 
 HistoryDatabase::~HistoryDatabase() = default;
 
 sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
-  db_.set_histogram_tag("History");
-
   if (!db_.Open(history_name))
     return LogInitFailure(InitStep::OPEN);
 
@@ -118,9 +115,6 @@ sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
   // Exclude the history file from backups.
   base::apple::SetBackupExclusion(history_name);
 #endif
-
-  // Prime the cache.
-  db_.Preload();
 
   // Create the tables and indices. If you add something here, also add it to
   // `RecreateAllTablesButURL()`.
@@ -148,40 +142,37 @@ sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
 
 void HistoryDatabase::ComputeDatabaseMetrics(
     const base::FilePath& history_name) {
-  base::TimeTicks start_time = base::TimeTicks::Now();
   std::optional<int64_t> file_size = base::GetFileSize(history_name);
   if (!file_size.has_value()) {
     return;
   }
   int file_mb = static_cast<int>(file_size.value() / (1024 * 1024));
-  UMA_HISTOGRAM_MEMORY_MB("History.DatabaseFileMB", file_mb);
+  base::UmaHistogramMemoryMB("History.DatabaseFileMB", file_mb);
 
   sql::Statement url_count(db_.GetUniqueStatement("SELECT count(*) FROM urls"));
-  if (!url_count.Step())
+  if (!url_count.Step()) {
     return;
-  UMA_HISTOGRAM_COUNTS_1M("History.URLTableCount", url_count.ColumnInt(0));
+  }
+  base::UmaHistogramCounts1M("History.URLTableCount", url_count.ColumnInt(0));
 
   sql::Statement visit_count(db_.GetUniqueStatement(
       "SELECT count(*) FROM visits"));
-  if (!visit_count.Step())
+  if (!visit_count.Step()) {
     return;
-  UMA_HISTOGRAM_COUNTS_1M("History.VisitTableCount", visit_count.ColumnInt(0));
+  }
+  base::UmaHistogramCounts1M("History.VisitTableCount",
+                             visit_count.ColumnInt(0));
 
   sql::Statement visited_link_count(
       db_.GetUniqueStatement("SELECT count(*) FROM visited_links"));
   if (!visited_link_count.Step()) {
     return;
   }
-  UMA_HISTOGRAM_COUNTS_1M("History.VisitedLinkTableCount",
-                          visited_link_count.ColumnInt(0));
-
-  UMA_HISTOGRAM_TIMES("History.DatabaseBasicMetricsTime",
-                      base::TimeTicks::Now() - start_time);
+  base::UmaHistogramCounts1M("History.VisitedLinkTableCount",
+                             visited_link_count.ColumnInt(0));
 
   // Compute metrics about foreign visits (i.e. visits coming from other
   // devices) in the DB.
-  start_time = base::TimeTicks::Now();
-
   sql::Statement foreign_visits_sql(db_.GetUniqueStatement(
       "SELECT from_visit, opener_visit, originator_cache_guid, "
       "originator_visit_id, originator_from_visit, originator_opener_visit "
@@ -252,14 +243,9 @@ void HistoryDatabase::ComputeDatabaseMetrics(
                                mappable_opener_visits);
   }
 
-  base::UmaHistogramTimes("History.DatabaseForeignVisitMetricsTime",
-                          base::TimeTicks::Now() - start_time);
-
   // Compute the advanced metrics even less often, pending timing data showing
   // that's not necessary.
   if (base::RandInt(1, 3) == 3) {
-    start_time = base::TimeTicks::Now();
-
     // Collect all URLs visited within the last month.
     base::Time one_month_ago = base::Time::Now() - base::Days(30);
     sql::Statement url_sql(db_.GetUniqueStatement(
@@ -274,7 +260,7 @@ void HistoryDatabase::ComputeDatabaseMetrics(
     std::set<std::string> month_hosts;
     base::Time one_week_ago = base::Time::Now() - base::Days(7);
     while (url_sql.Step()) {
-      GURL url(url_sql.ColumnString(0));
+      GURL url(url_sql.ColumnStringView(0));
       base::Time visit_time = url_sql.ColumnTime(1);
       ++month_url_count;
       month_hosts.insert(url.host());
@@ -283,14 +269,12 @@ void HistoryDatabase::ComputeDatabaseMetrics(
         week_hosts.insert(url.host());
       }
     }
-    UMA_HISTOGRAM_COUNTS_1M("History.WeeklyURLCount", week_url_count);
-    UMA_HISTOGRAM_COUNTS_10000("History.WeeklyHostCount",
-                               static_cast<int>(week_hosts.size()));
-    UMA_HISTOGRAM_COUNTS_1M("History.MonthlyURLCount", month_url_count);
-    UMA_HISTOGRAM_COUNTS_10000("History.MonthlyHostCount",
-                               static_cast<int>(month_hosts.size()));
-    UMA_HISTOGRAM_TIMES("History.DatabaseAdvancedMetricsTime",
-                        base::TimeTicks::Now() - start_time);
+    base::UmaHistogramCounts1M("History.WeeklyURLCount", week_url_count);
+    base::UmaHistogramCounts10000("History.WeeklyHostCount",
+                                  static_cast<int>(week_hosts.size()));
+    base::UmaHistogramCounts1M("History.MonthlyURLCount", month_url_count);
+    base::UmaHistogramCounts10000("History.MonthlyHostCount",
+                                  static_cast<int>(month_hosts.size()));
   }
 }
 
@@ -307,7 +291,7 @@ int HistoryDatabase::CountUniqueHostsVisitedLastMonth() {
 
   std::set<std::string> hosts;
   while (url_sql.Step()) {
-    GURL url(url_sql.ColumnString(0));
+    GURL url(url_sql.ColumnStringView(0));
     hosts.insert(url.host());
   }
 
@@ -345,7 +329,7 @@ DomainsVisitedResult HistoryDatabase::GetUniqueDomainsVisited(
   std::set<std::string> locally_visited_domains_set;
 
   while (url_sql.Step()) {
-    GURL url(url_sql.ColumnString(0));
+    GURL url(url_sql.ColumnStringView(0));
     std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
         url, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
 
@@ -360,7 +344,7 @@ DomainsVisitedResult HistoryDatabase::GetUniqueDomainsVisited(
       result.all_visited_domains.push_back(domain);
     }
 
-    bool is_local = url_sql.ColumnString(1).empty() &&
+    bool is_local = url_sql.ColumnStringView(1).empty() &&
                     url_sql.ColumnInt(2) == VisitSource::SOURCE_BROWSED;
 
     if (is_local && !locally_visited_domains_set.contains(domain)) {
@@ -443,6 +427,9 @@ std::string HistoryDatabase::GetDiagnosticInfo(
     int extended_error,
     sql::Statement* statement,
     sql::DatabaseDiagnostics* diagnostics) {
+  if (!db_.is_open()) {
+    return "Database is not opened.";
+  }
   return db_.GetDiagnosticInfo(extended_error, statement, diagnostics);
 }
 
@@ -605,10 +592,9 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
 
   if (cur_version == 21) {
     // The android_urls table's data schemal was changed in version 21.
-#if BUILDFLAG(IS_ANDROID)
-    if (!MigrateToVersion22())
-      return LogMigrationFailure(21);
-#endif
+
+    // The android_urls table ceased usage in 91.0.4438.0 and is dropped in
+    // version 70. The migration code was removed along with version 70.
     ++cur_version;
     // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
     std::ignore = meta_table_.SetVersionNumber(cur_version);
@@ -1004,6 +990,19 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
     std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
+  if (cur_version == 69) {
+    // The android_urls table's stopped being read in 91.0.4438.0. Delete it if
+    // it still exists.
+#if BUILDFLAG(IS_ANDROID)
+    if (!DropAndroidUrlsTable()) {
+      return LogMigrationFailure(69);
+    }
+#endif
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
   // =========================       ^^ new migration code goes here ^^
   // ADDING NEW MIGRATION CODE
   // =========================
@@ -1055,5 +1054,14 @@ bool HistoryDatabase::MigrateRemoveTypedUrlMetadata() {
   }
   return true;
 }
+
+#if BUILDFLAG(IS_ANDROID)
+bool HistoryDatabase::DropAndroidUrlsTable() {
+  if (!db_.Execute("DROP TABLE IF EXISTS android_urls;")) {
+    return false;
+  }
+  return true;
+}
+#endif
 
 }  // namespace history

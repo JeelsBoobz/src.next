@@ -88,7 +88,8 @@ struct BlockLineClampData {
 
   void UpdateClampOffsetFromStyle(LayoutUnit clamp_bfc_offset,
                                   LayoutUnit content_edge) {
-    if (data.state == LineClampData::kDontTruncate) {
+    if (ignore_line_clamp) {
+      DCHECK_EQ(data.state, LineClampData::kDisabled);
       return;
     }
 
@@ -102,7 +103,7 @@ struct BlockLineClampData {
 
     DCHECK_EQ(data.state, LineClampData::kDisabled);
     if (clamp_bfc_offset == kIndefiniteSize) {
-      data.state = LineClampData::kDontTruncate;
+      data.state = LineClampData::kDisabled;
     } else {
       data.state = LineClampData::kMeasureLinesUntilBfcOffset;
       data.lines_until_clamp = 0;
@@ -111,7 +112,8 @@ struct BlockLineClampData {
   }
 
   void UpdateLinesFromStyle(int lines_until_clamp) {
-    if (data.state == LineClampData::kDontTruncate) {
+    if (ignore_line_clamp) {
+      DCHECK_EQ(data.state, LineClampData::kDisabled);
       return;
     }
 
@@ -126,8 +128,15 @@ struct BlockLineClampData {
                          const PreviousInflowPosition& previous_inflow_position,
                          LayoutUnit block_end_padding) {
     if (data.state == LineClampData::kClampByLines) {
-      if (!layout_result->GetPhysicalFragment().IsFormattingContextRoot()) {
+      if (!layout_result->GetPhysicalFragment().IsFormattingContextRoot() &&
+          !ignore_further_lines) {
         data.lines_until_clamp = layout_result->LinesUntilClamp();
+
+        if (layout_result->WouldBeLastLineIfNotForEllipsis()) {
+          DCHECK(layout_result->GetPhysicalFragment().IsLineBox());
+          DCHECK_EQ(data.lines_until_clamp, 0);
+          ignore_further_lines = true;
+        }
       }
 
       if (IsPastClampPoint() &&
@@ -178,6 +187,9 @@ struct BlockLineClampData {
 
   LineClampData data;
 
+  // Set to true when we relayout ignoring line clamp.
+  bool ignore_line_clamp = false;
+
   // TODO(abotella): Make the following fields into a union.
 
   // The initial number of lines until clamp from the start of this layout.
@@ -192,6 +204,12 @@ struct BlockLineClampData {
   // the last line or box before clamp. Can only be set if
   // data.state == kClampByLines.
   std::optional<PreviousInflowPosition> previous_inflow_position_when_clamped;
+
+  // If set, any lines added by any further layout results are ignored when
+  // decreasing the number of lines until clamp. Used when we know that the
+  // remaining lines in this block box would not exist if we weren't
+  // ellipsizing. Can only be set if data.state == kClampByLines.
+  bool ignore_further_lines = false;
 };
 
 // A class for general block layout (e.g. a <div> with no special style).
@@ -245,6 +263,11 @@ class CORE_EXPORT BlockLayoutAlgorithm
       const PreviousInflowPosition& previous_inflow_position) const {
     return BfcBlockOffset() + previous_inflow_position.logical_block_offset +
            previous_inflow_position.margin_strut.Sum();
+  }
+
+  LogicalSize PercentageSizeForChild(const LayoutInputNode& child) {
+    return child.IsReplaced() ? replaced_child_percentage_size_
+                              : child_percentage_size_;
   }
 
   BoxStrut CalculateMargins(LayoutInputNode child,
@@ -358,6 +381,13 @@ class CORE_EXPORT BlockLayoutAlgorithm
       PreviousInflowPosition*,
       InlineChildLayoutContext*,
       const InlineBreakToken** previous_inline_break_token);
+
+  // Update text box trim state after child layout.
+  void UpdateTextBoxTrim(LayoutInputNode child,
+                         const BreakToken* incoming_child_break_token,
+                         const InlineBreakToken* outgoing_inline_break_token,
+                         const LayoutResult*,
+                         PreviousInflowPosition*);
 
   // Consume all remaining fragmentainer space. This happens when we decide to
   // break before a child.
@@ -491,7 +521,7 @@ class CORE_EXPORT BlockLayoutAlgorithm
     }
     // Ensure we're really a column box. We can't use |BoxType| to call this
     // from the constructor.
-    DCHECK(node_.GetLayoutBox()->SlowFirstChild()->IsLayoutFlowThread());
+    DCHECK(node_.GetLayoutBox()->IsMulticolContainer());
     return false;
   }
 
@@ -516,24 +546,6 @@ class CORE_EXPORT BlockLayoutAlgorithm
   LogicalOffset AdjustSliderThumbInlineOffset(
       const LogicalFragment& fragment,
       const LogicalOffset& logical_offset);
-
-  bool ShouldTextBoxTrimStart() const {
-    return should_text_box_trim_node_start_ ||
-           should_text_box_trim_fragmentainer_start_;
-  }
-  bool ShouldTextBoxTrimEnd() const {
-    return should_text_box_trim_node_end_ ||
-           should_text_box_trim_fragmentainer_end_;
-  }
-
-  bool ShouldTextBoxTrim() const {
-    return ShouldTextBoxTrimStart() || ShouldTextBoxTrimEnd();
-  }
-
-  void ClearShouldTextBoxTrimEnd() {
-    should_text_box_trim_node_end_ = false;
-    should_text_box_trim_fragmentainer_end_ = false;
-  }
 
   LogicalSize child_percentage_size_;
   LogicalSize replaced_child_percentage_size_;
@@ -585,15 +597,6 @@ class CORE_EXPORT BlockLayoutAlgorithm
   // this). It is used to check if we're at a valid class A or B breakpoint
   // (between block-level siblings or line box siblings).
   bool has_break_opportunity_before_next_child_ : 1;
-
-  // If the `text-box-trim` is effective for block-start/end edges of a node.
-  bool should_text_box_trim_node_start_ : 1;
-  bool should_text_box_trim_node_end_ : 1;
-
-  // If the `text-box-trim` is effective for block-start/end edges of a
-  // fragmentainer.
-  bool should_text_box_trim_fragmentainer_start_ : 1;
-  bool should_text_box_trim_fragmentainer_end_ : 1;
 };
 
 }  // namespace blink

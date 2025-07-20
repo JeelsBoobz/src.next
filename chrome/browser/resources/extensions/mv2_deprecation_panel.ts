@@ -81,14 +81,14 @@ export class ExtensionsMv2DeprecationPanelElement extends
     };
   }
 
-  extensions: chrome.developerPrivate.ExtensionInfo[] = [];
-  delegate?: ItemDelegate&Mv2DeprecationDelegate;
-  mv2ExperimentStage: Mv2ExperimentStage = Mv2ExperimentStage.NONE;
-  showTitle: boolean = false;
-  protected headerString_: string = '';
-  private subtitleString_: string = '';
-  private extensionWithActionMenuOpened_?:
-      chrome.developerPrivate.ExtensionInfo;
+  accessor extensions: chrome.developerPrivate.ExtensionInfo[] = [];
+  accessor delegate: ItemDelegate&Mv2DeprecationDelegate|undefined;
+  accessor mv2ExperimentStage: Mv2ExperimentStage = Mv2ExperimentStage.NONE;
+  accessor showTitle: boolean = false;
+  protected accessor headerString_: string = '';
+  private accessor subtitleString_: string = '';
+  private accessor extensionWithActionMenuOpened_:
+      chrome.developerPrivate.ExtensionInfo|undefined;
 
   override willUpdate(changedProperties: PropertyValues<this>) {
     super.willUpdate(changedProperties);
@@ -130,6 +130,8 @@ export class ExtensionsMv2DeprecationPanelElement extends
     const subtitle = await PluralStringProxyImpl.getInstance().getPluralString(
         subtitleVar, this.extensions.length);
     this.subtitleString_ = subtitle.replace('$1', subtitleLink);
+    this.subtitleString_ =
+        this.subtitleString_.replace('$2', this.i18n('opensInNewTab'));
   }
 
   /**
@@ -247,7 +249,8 @@ export class ExtensionsMv2DeprecationPanelElement extends
    * representation instead of the string since the string holds a link.
    */
   protected getSubtitleString_(): TrustedHTML {
-    return sanitizeInnerHtml(this.subtitleString_);
+    return sanitizeInnerHtml(
+        this.subtitleString_, {attrs: ['aria-description']});
   }
 
   /**

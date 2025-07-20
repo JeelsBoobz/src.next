@@ -21,8 +21,9 @@
 
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 
+#include <variant>
+
 #include "cc/base/region.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
@@ -225,7 +226,7 @@ PositionWithAffinity HitTestResult::GetPosition() const {
         MostForwardCaretPosition(Position::FirstPositionInNode(*inner_node_)));
   }
 
-  if (node->IsPseudoElement() && node->GetPseudoId() == kPseudoIdCheck) {
+  if (node->IsPseudoElement() && node->GetPseudoId() == kPseudoIdCheckMark) {
     return PositionWithAffinity(
         MostForwardCaretPosition(Position::FirstPositionInNode(*inner_node_)));
   }
@@ -299,7 +300,8 @@ CompositorElementId HitTestResult::GetScrollableContainer() const {
   while (cur_box) {
     if (cur_box->IsGlobalRootScroller() ||
         (cur_box->IsScrollContainer() &&
-         cur_box->GetScrollableArea()->ScrollsOverflow())) {
+         (cur_box->GetScrollableArea()->ScrollsOverflow() ||
+          !cur_box->GetScrollableArea()->CanPropagateScroll()))) {
       return cur_box->GetScrollableArea()->GetScrollElementId();
     }
 
@@ -390,7 +392,15 @@ String HitTestResult::Title(TextDirection& dir) const {
   // using it.
   for (Node* title_node = inner_node_.Get(); title_node;
        title_node = FlatTreeTraversal::Parent(*title_node)) {
-    if (auto* element = DynamicTo<Element>(title_node)) {
+    if (auto* html_element = DynamicTo<HTMLElement>(title_node)) {
+      TextDirection title_dir;
+      const AtomicString& title = html_element->GetDirectionalAttribute(
+          html_names::kTitleAttr, title_dir);
+      if (!title.IsNull()) {
+        dir = title_dir;
+        return title;
+      }
+    } else if (auto* element = DynamicTo<Element>(title_node)) {
       String title = element->title();
       if (!title.IsNull()) {
         if (LayoutObject* layout_object = title_node->GetLayoutObject())
@@ -436,7 +446,8 @@ Image* HitTestResult::GetImage(const Node* node) {
   }
   const ImageResourceContent* image_content =
       layout_image_resource ? layout_image_resource->CachedImage() : nullptr;
-  if (image_content && !image_content->ErrorOccurred()) {
+  if (image_content && !image_content->ErrorOccurred() &&
+      image_content->HasImage()) {
     return image_content->GetImage();
   }
   return nullptr;
@@ -476,10 +487,10 @@ KURL HitTestResult::AbsoluteMediaURL() const {
 MediaStreamDescriptor* HitTestResult::GetMediaStreamDescriptor() const {
   if (HTMLMediaElement* media_elt = MediaElement()) {
     auto variant = media_elt->GetSrcObjectVariant();
-    if (absl::holds_alternative<MediaStreamDescriptor*>(variant)) {
+    if (std::holds_alternative<MediaStreamDescriptor*>(variant)) {
       // It might be nullptr-valued variant, too, here, but we return nullptr
       // for that, regardless.
-      return absl::get<MediaStreamDescriptor*>(variant);
+      return std::get<MediaStreamDescriptor*>(variant);
     }
   }
   return nullptr;
@@ -488,10 +499,10 @@ MediaStreamDescriptor* HitTestResult::GetMediaStreamDescriptor() const {
 MediaSourceHandle* HitTestResult::GetMediaSourceHandle() const {
   if (HTMLMediaElement* media_elt = MediaElement()) {
     auto variant = media_elt->GetSrcObjectVariant();
-    if (absl::holds_alternative<MediaSourceHandle*>(variant)) {
+    if (std::holds_alternative<MediaSourceHandle*>(variant)) {
       // It might be a nullptr-valued MediaStreamDescriptor* variant, here, but
       // we return nullptr for that, regardless.
-      return absl::get<MediaSourceHandle*>(variant);
+      return std::get<MediaSourceHandle*>(variant);
     }
   }
   return nullptr;

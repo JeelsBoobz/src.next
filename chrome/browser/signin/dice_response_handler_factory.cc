@@ -7,10 +7,10 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/about_signin_internals_factory.h"
 #include "chrome/browser/signin/account_reconcilor_factory.h"
-#include "chrome/browser/signin/bound_session_credentials/registration_token_helper.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/dice_response_handler.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/signin/binding_key_registration_token_helper.h"
 #include "components/signin/public/base/signin_switches.h"
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
@@ -20,11 +20,11 @@
 namespace {
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-std::unique_ptr<RegistrationTokenHelper> BuildRegistrationTokenHelper(
+std::unique_ptr<BindingKeyRegistrationTokenHelper> BuildRegistrationTokenHelper(
     unexportable_keys::UnexportableKeyService& unexportable_key_service,
-    RegistrationTokenHelper::KeyInitParam key_init_param) {
-  return std::make_unique<RegistrationTokenHelper>(unexportable_key_service,
-                                                   std::move(key_init_param));
+    BindingKeyRegistrationTokenHelper::KeyInitParam key_init_param) {
+  return std::make_unique<BindingKeyRegistrationTokenHelper>(
+      unexportable_key_service, std::move(key_init_param));
 }
 
 DiceResponseHandler::RegistrationTokenHelperFactory
@@ -73,7 +73,8 @@ DiceResponseHandlerFactory::DiceResponseHandlerFactory()
 DiceResponseHandlerFactory::~DiceResponseHandlerFactory() = default;
 
 // BrowserContextKeyedServiceFactory:
-KeyedService* DiceResponseHandlerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+DiceResponseHandlerFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = static_cast<Profile*>(context);
   DiceResponseHandler::RegistrationTokenHelperFactory
@@ -83,7 +84,7 @@ KeyedService* DiceResponseHandlerFactory::BuildServiceInstanceFor(
       profile->GetPrefs(),
       UnexportableKeyServiceFactory::GetForProfile(profile));
 #endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  return new DiceResponseHandler(
+  return std::make_unique<DiceResponseHandler>(
       ChromeSigninClientFactory::GetForProfile(profile),
       IdentityManagerFactory::GetForProfile(profile),
       AccountReconcilorFactory::GetForProfile(profile),

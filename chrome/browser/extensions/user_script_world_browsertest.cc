@@ -7,7 +7,6 @@
 #include "base/test/values_test_util.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -15,9 +14,12 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/renderer_startup_helper.h"
 #include "extensions/browser/script_executor.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/mojom/host_id.mojom.h"
+#include "extensions/common/mojom/match_origin_as_fallback.mojom.h"
 #include "extensions/test/result_catcher.h"
 #include "extensions/test/test_extension_dir.h"
 #include "net/dns/mock_host_resolver.h"
@@ -97,7 +99,7 @@ class UserScriptWorldBrowserTest : public ExtensionApiTest {
             blink::mojom::UserActivationOption::kDoNotActivate,
             blink::mojom::PromiseResultOption::kAwait)),
         ScriptExecutor::SPECIFIED_FRAMES, {ExtensionApiFrameIdMap::kTopFrameId},
-        ScriptExecutor::DONT_MATCH_ABOUT_BLANK,
+        mojom::MatchOriginAsFallbackBehavior::kNever,
         mojom::RunLocation::kDocumentIdle, ScriptExecutor::DEFAULT_PROCESS,
         GURL() /* webview_src */, base::BindLambdaForTesting(on_complete));
     run_loop.Run();
@@ -136,10 +138,9 @@ class UserScriptWorldBrowserTest : public ExtensionApiTest {
       const std::string& host_permission) {
     scoped_refptr<const Extension> extension =
         ExtensionBuilder("extension")
-            .SetManifestVersion(3)
             .AddHostPermission(host_permission)
             .Build();
-    extension_service()->AddExtension(extension.get());
+    extension_registrar()->AddExtension(extension);
     EXPECT_TRUE(
         extension_registry()->enabled_extensions().GetByID(extension->id()));
     return extension.get();
@@ -158,8 +159,10 @@ class UserScriptWorldBrowserTest : public ExtensionApiTest {
                                     std::optional<std::string> csp,
                                     bool enable_messaging) {
     RendererStartupHelperFactory::GetForBrowserContext(profile())
-        ->SetUserScriptWorldProperties(extension, std::move(world_id),
-                                       std::move(csp), enable_messaging);
+        ->SetUserScriptWorldProperties(
+            extension,
+            mojom::UserScriptWorldInfo::New(extension.id(), std::move(world_id),
+                                            std::move(csp), enable_messaging));
   }
 
   // Clears associated user script world properties in the renderer(s).

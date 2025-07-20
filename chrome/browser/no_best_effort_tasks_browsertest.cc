@@ -11,6 +11,7 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/test/values_test_util.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "chrome/browser/chrome_content_browser_client.h"
@@ -30,6 +31,7 @@
 #include "url/url_constants.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -170,6 +172,9 @@ IN_PROC_BROWSER_TEST_F(NoBestEffortTasksTest, DISABLED_LoadAndPaintFileScheme) {
 // http://crbug.com/924416 was resolved.
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 IN_PROC_BROWSER_TEST_F(NoBestEffortTasksTest, LoadExtensionAndSendMessages) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // Load the extension, waiting until the ExtensionRegistry reports that its
@@ -182,9 +187,7 @@ IN_PROC_BROWSER_TEST_F(NoBestEffortTasksTest, LoadExtensionAndSendMessages) {
                       .AppendASCII("no_best_effort_tasks_test_extension");
   extensions::TestExtensionRegistryObserver observer(
       extensions::ExtensionRegistry::Get(browser()->profile()));
-  extensions::UnpackedInstaller::Create(
-      extensions::ExtensionSystem::Get(browser()->profile())
-          ->extension_service())
+  extensions::UnpackedInstaller::Create(browser()->profile())
       ->Load(extension_dir);
   scoped_refptr<const extensions::Extension> extension =
       observer.WaitForExtensionReady();
@@ -223,7 +226,7 @@ IN_PROC_BROWSER_TEST_F(NoBestEffortTasksTest, LoadExtensionAndSendMessages) {
                         request_reply_javascript);
     if (result.error.empty()) {
       LOG(INFO) << "Got a response from the extension.";
-      EXPECT_TRUE(result.value.GetDict().FindBool("pong").value_or(false));
+      EXPECT_TRUE(result.ExtractDict().FindBool("pong").value_or(false));
       break;
     }
     // An error indicates the extension's message listener isn't up yet. Wait a

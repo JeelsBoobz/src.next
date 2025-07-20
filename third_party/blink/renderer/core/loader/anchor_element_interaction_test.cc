@@ -11,6 +11,8 @@
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "base/test/with_feature_override.h"
+#include "base/time/time.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/synthetic_web_input_event_builders.h"
@@ -129,6 +131,53 @@ TEST_F(AnchorElementInteractionTest, SingleAnchor) {
   SendMouseDownEvent();
   base::RunLoop().RunUntilIdle();
   KURL expected_url = KURL("https://anchor1.com/");
+  EXPECT_EQ(1u, hosts_.size());
+  std::optional<KURL> url_received = hosts_[0]->url_received_;
+  EXPECT_TRUE(url_received.has_value());
+  EXPECT_EQ(expected_url, url_received);
+  EXPECT_EQ(PointerEventType::kOnPointerDown, hosts_[0]->event_type_);
+}
+
+class AnchorElementInteractionFragmentTest
+    : public base::test::WithFeatureOverride,
+      public AnchorElementInteractionTest {
+ public:
+  AnchorElementInteractionFragmentTest()
+      : base::test::WithFeatureOverride(
+            blink::kPreloadingNoSamePageFragmentAnchorTracking) {}
+};
+
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(AnchorElementInteractionFragmentTest);
+
+TEST_P(AnchorElementInteractionFragmentTest, SamePageFragment) {
+  String source("https://example.com/p1");
+  SimRequest main_resource(source, "text/html");
+  LoadURL(source);
+  main_resource.Complete(R"HTML(
+    <a href='#foo'>
+      <div style='padding: 0px; width: 400px; height: 400px;'></div>
+    </a>
+  )HTML");
+  SendMouseDownEvent();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(1u, hosts_.size());
+  EXPECT_EQ(1u, hosts_.size());
+  std::optional<KURL> url_received = hosts_[0]->url_received_;
+  EXPECT_EQ(url_received.has_value(), !IsParamFeatureEnabled());
+}
+
+TEST_P(AnchorElementInteractionFragmentTest, OtherPageFragment) {
+  String source("https://example.com/p1");
+  SimRequest main_resource(source, "text/html");
+  LoadURL(source);
+  main_resource.Complete(R"HTML(
+    <a href='bar.html#foo'>
+      <div style='padding: 0px; width: 400px; height: 400px;'></div>
+    </a>
+  )HTML");
+  SendMouseDownEvent();
+  base::RunLoop().RunUntilIdle();
+  KURL expected_url = KURL("https://example.com/bar.html#foo");
   EXPECT_EQ(1u, hosts_.size());
   std::optional<KURL> url_received = hosts_[0]->url_received_;
   EXPECT_TRUE(url_received.has_value());
@@ -313,7 +362,7 @@ TEST_F(AnchorElementInteractionTest, ValidMouseHover) {
 
   // Wait for hover logic to process the event
   task_runner->AdvanceTimeAndRun(
-      AnchorElementInteractionTracker::GetHoverDwellTime());
+      AnchorElementInteractionTracker::kModerateHoverDwellTime);
   base::RunLoop().RunUntilIdle();
 
   KURL expected_url = KURL("https://anchor1.com/");
@@ -348,7 +397,7 @@ TEST_F(AnchorElementInteractionTest, ShortMouseHover) {
 
   // Wait for hover logic to process the event
   task_runner->AdvanceTimeAndRun(
-      0.5 * AnchorElementInteractionTracker::GetHoverDwellTime());
+      0.5 * AnchorElementInteractionTracker::kModerateHoverDwellTime);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1u, hosts_.size());
@@ -381,7 +430,7 @@ TEST_F(AnchorElementInteractionTest, MousePointerEnterAndLeave) {
       mouse_enter_event, Vector<WebMouseEvent>(), Vector<WebMouseEvent>());
 
   task_runner->AdvanceTimeAndRun(
-      0.5 * AnchorElementInteractionTracker::GetHoverDwellTime());
+      0.5 * AnchorElementInteractionTracker::kModerateHoverDwellTime);
 
   WebMouseEvent mouse_leave_event(
       WebInputEvent::Type::kMouseLeave, coordinates, coordinates,
@@ -392,7 +441,7 @@ TEST_F(AnchorElementInteractionTest, MousePointerEnterAndLeave) {
 
   // Wait for hover logic to process the event
   task_runner->AdvanceTimeAndRun(
-      AnchorElementInteractionTracker::GetHoverDwellTime());
+      AnchorElementInteractionTracker::kModerateHoverDwellTime);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1u, hosts_.size());
@@ -537,7 +586,7 @@ TEST_F(AnchorElementInteractionTest, MouseVelocitySent) {
   constexpr gfx::Vector2dF velocity{40, -30};
   constexpr base::TimeDelta timestep = base::Milliseconds(20);
   for (base::TimeDelta t;
-       t <= AnchorElementInteractionTracker::GetHoverDwellTime();
+       t <= AnchorElementInteractionTracker::kModerateHoverDwellTime;
        t += timestep) {
     gfx::PointF coordinates =
         origin + gfx::ScaleVector2d(velocity, t.InSecondsF());
@@ -568,7 +617,9 @@ class AnchorElementInteractionViewportHeuristicsTest
   AnchorElementInteractionViewportHeuristicsTest() {
     feature_list_.InitWithFeaturesAndParameters(
         {{features::kNavigationPredictor,
-          {{"random_anchor_sampling_period", "1"}}},
+          {{"random_anchor_sampling_period", "1"},
+           {"intersection_observation_after_fcp_only", "true"},
+           {"post_fcp_observation_delay", "10ms"}}},
          {features::kNavigationPredictorNewViewportFeatures, {}},
          {features::kPreloadingViewportHeuristics,
           {{"delay", "100ms"},
@@ -634,12 +685,15 @@ class AnchorElementInteractionViewportHeuristicsTest
     main_resource.Complete(params.main_resource_body);
 
     Compositor().BeginFrame();
+    // The 10ms matches the "post_fcp_observation_delay" param set for
+    // kNavigationPredictor.
+    platform_->RunForPeriod(base::Milliseconds(10));
     DispatchPointerDownAndVerticalScroll(params.pointer_down_location,
                                          params.scroll_delta);
     ProcessPositionUpdates();
 
     // The 100ms matches the delay param set for kPreloadingViewportHeuristic.
-    platform_->RunForPeriodSeconds(0.1);
+    platform_->RunForPeriod(base::Milliseconds(100));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -808,10 +862,13 @@ TEST_F(AnchorElementInteractionViewportHeuristicsTest,
   )HTML");
 
   Compositor().BeginFrame();
+  // The 10ms matches the "post_fcp_observation_delay" param set for
+  // kNavigationPredictor.
+  platform_->RunForPeriod(base::Milliseconds(10));
   DispatchPointerDownAndVerticalScroll(gfx::PointF(100, 200), -100);
   ProcessPositionUpdates();
 
-  platform_->RunForPeriodSeconds(0.01);
+  platform_->RunForPeriod(base::Milliseconds(10));
   // Second pointerdown happens 10ms after the scroll end, which is within the
   // configured delay period of 100ms.
   DispatchPointerDown(gfx::PointF(200, 375));
