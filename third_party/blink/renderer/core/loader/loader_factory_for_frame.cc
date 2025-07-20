@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/loader/loader_factory_for_frame.h"
 
+#include "base/containers/adapters.h"
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
@@ -15,6 +16,7 @@
 #include "third_party/blink/public/common/blob/blob_utils.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
+#include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
 #include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_network_provider.h"
 #include "third_party/blink/public/platform/platform.h"
@@ -99,17 +101,8 @@ Vector<std::unique_ptr<URLLoaderThrottle>> CreateThrottlesImpl(
   }
   CHECK(network_request);
 
-  WebVector<std::unique_ptr<URLLoaderThrottle>> web_throttles =
-      throttle_provider->CreateThrottles(local_frame_token, *network_request);
-  // TODO(crbug.com/1517144): Stop WebVector->Vector manual conversion when we
-  // have a WTF::Vector constructor which creates a vector with items moved from
-  // a collection.
-  Vector<std::unique_ptr<URLLoaderThrottle>> throttles;
-  throttles.reserve(base::checked_cast<wtf_size_t>(web_throttles.size()));
-  for (auto& throttle : web_throttles) {
-    throttles.push_back(std::move(throttle));
-  }
-  return throttles;
+  return WTF::ToVector(base::RangeAsRvalues(
+      throttle_provider->CreateThrottles(local_frame_token, *network_request)));
 }
 
 }  // namespace

@@ -4,11 +4,12 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.base.Callback;
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelActionListener.DialogType;
 import org.chromium.components.browser_ui.widget.ActionConfirmationResult;
@@ -18,23 +19,35 @@ import org.chromium.components.browser_ui.widget.ActionConfirmationResult;
  * through to {@link TabModel}.
  */
 @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+@NullMarked
 public class PassthroughTabRemover implements TabRemover {
     private final Supplier<TabGroupModelFilter> mTabGroupModelFilterSupplier;
 
     /**
      * @param tabGroupModelFilterSupplier The supplier of the {@link TabGroupModelFilter}.
      */
-    public PassthroughTabRemover(
-            @NonNull Supplier<TabGroupModelFilter> tabGroupModelFilterSupplier) {
+    public PassthroughTabRemover(Supplier<TabGroupModelFilter> tabGroupModelFilterSupplier) {
         mTabGroupModelFilterSupplier = tabGroupModelFilterSupplier;
     }
 
     @Override
     public void closeTabs(
-            @NonNull TabClosureParams tabClosureParams,
+            TabClosureParams tabClosureParams,
             boolean allowDialog,
             @Nullable TabModelActionListener listener) {
-        forceCloseTabs(tabClosureParams);
+        prepareCloseTabs(tabClosureParams, allowDialog, listener, this::forceCloseTabs);
+    }
+
+    @Override
+    public void prepareCloseTabs(
+            TabClosureParams tabClosureParams,
+            boolean allowDialog,
+            @Nullable TabModelActionListener listener,
+            Callback<TabClosureParams> onPreparedCallback) {
+        if (listener != null) {
+            listener.willPerformActionOrShowDialog(DialogType.NONE, /* willSkipDialog= */ true);
+        }
+        onPreparedCallback.onResult(tabClosureParams);
         if (listener != null) {
             listener.onConfirmationDialogResult(
                     DialogType.NONE, ActionConfirmationResult.IMMEDIATE_CONTINUE);
@@ -42,28 +55,38 @@ public class PassthroughTabRemover implements TabRemover {
     }
 
     @Override
-    public void forceCloseTabs(@NonNull TabClosureParams tabClosureParams) {
-        assert mTabGroupModelFilterSupplier.hasValue();
-        doCloseTabs(mTabGroupModelFilterSupplier.get(), tabClosureParams);
+    public void forceCloseTabs(TabClosureParams tabClosureParams) {
+        TabGroupModelFilterInternal tabGroupModelFilter = getTabGroupModelFilter();
+        doCloseTabs(tabGroupModelFilter, tabClosureParams);
     }
 
     @Override
-    public void removeTab(
-            @NonNull Tab tab, boolean allowDialog, @Nullable TabModelActionListener listener) {
-        assert mTabGroupModelFilterSupplier.hasValue();
-        doRemoveTab(mTabGroupModelFilterSupplier.get().getTabModel(), tab);
+    public void removeTab(Tab tab, boolean allowDialog, @Nullable TabModelActionListener listener) {
+        if (listener != null) {
+            listener.willPerformActionOrShowDialog(DialogType.NONE, /* willSkipDialog= */ true);
+        }
+        TabGroupModelFilterInternal tabGroupModelFilter = getTabGroupModelFilter();
+        doRemoveTab(tabGroupModelFilter.getTabModel(), tab);
         if (listener != null) {
             listener.onConfirmationDialogResult(
                     DialogType.NONE, ActionConfirmationResult.IMMEDIATE_CONTINUE);
         }
+    }
+
+    private TabGroupModelFilterInternal getTabGroupModelFilter() {
+
+        @Nullable TabGroupModelFilterInternal tabGroupModelFilter =
+                (TabGroupModelFilterInternal) mTabGroupModelFilterSupplier.get();
+        assert tabGroupModelFilter != null;
+        return tabGroupModelFilter;
     }
 
     static boolean doCloseTabs(
-            @NonNull TabGroupModelFilter filter, @NonNull TabClosureParams tabClosureParams) {
+            TabGroupModelFilterInternal filter, TabClosureParams tabClosureParams) {
         return filter.closeTabs(tabClosureParams);
     }
 
-    static void doRemoveTab(@NonNull TabModel model, @NonNull Tab tab) {
-        model.removeTab(tab);
+    static void doRemoveTab(TabModel model, Tab tab) {
+        ((TabModelInternal) model).removeTab(tab);
     }
 }

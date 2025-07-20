@@ -29,7 +29,7 @@
 #include "base/time/time.h"
 #include "cc/input/event_listener_properties.h"
 #include "cc/input/overscroll_behavior.h"
-#include "cc/paint/paint_image.h"
+#include "cc/paint/draw_image.h"
 #include "cc/trees/paint_holding_commit_trigger.h"
 #include "cc/trees/paint_holding_reason.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
@@ -37,7 +37,6 @@
 #include "third_party/blink/public/common/input/web_gesture_event.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/page/drag_operation.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy_features.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/input/input_handler.mojom-blink-forward.h"
@@ -45,11 +44,11 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/html/forms/external_date_time_chooser.h"
 #include "third_party/blink/renderer/core/html/forms/popup_menu.h"
-#include "third_party/blink/renderer/core/layout/geometry/physical_offset.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/core/loader/navigation_policy.h"
 #include "third_party/blink/renderer/core/scroll/scroll_types.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 #include "third_party/blink/renderer/platform/graphics/touch_action.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/text/text_direction.h"
@@ -140,6 +139,8 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
 
   virtual bool IsPopup() { return false; }
 
+  virtual Element* GetPopupClientOwnerElement() { return nullptr; }
+
   virtual void ChromeDestroyed() = 0;
 
   virtual void SetWindowRect(const gfx::Rect&, LocalFrame&) = 0;
@@ -160,10 +161,15 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                                           const LocalFrameView*) const = 0;
 
   void ScheduleAnimation(const LocalFrameView* view) {
-    ScheduleAnimation(view, base::TimeDelta());
+    ScheduleAnimation(view, base::TimeDelta(), /*urgent=*/false);
   }
-  virtual void ScheduleAnimation(const LocalFrameView*,
-                                 base::TimeDelta delay) = 0;
+  void ScheduleAnimation(const LocalFrameView* view, base::TimeDelta delay) {
+    ScheduleAnimation(view, delay, /*urgent=*/false);
+  }
+
+  virtual void ScheduleAnimation(const LocalFrameView* local_frame_view,
+                                 base::TimeDelta delay,
+                                 bool urgent) = 0;
 
   // Tells the browser that another page has accessed the DOM of the initial
   // empty document of a main frame.
@@ -221,6 +227,8 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                                      cc::PaintHoldingReason reason) = 0;
   virtual void StopDeferringCommits(LocalFrame& main_frame,
                                     cc::PaintHoldingCommitTrigger) = 0;
+  virtual void SetShouldThrottleFrameRate(bool flag,
+                                          LocalFrame& main_frame) = 0;
 
   virtual std::unique_ptr<cc::ScopedPauseRendering> PauseRendering(
       LocalFrame& main_frame) = 0;
@@ -245,6 +253,10 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                              const gfx::Vector2d& cursor_offset,
                              const gfx::Rect& drag_obj_rect) = 0;
   virtual bool AcceptsLoadDrops() const = 0;
+
+  virtual std::optional<bool> GetWebRTCPostQuantumKeyAgreement() const {
+    return std::nullopt;
+  }
 
   // The LocalFrame pointer provides the ChromeClient with context about which
   // LocalFrame wants to create the new Page. Also, the newly created window
@@ -337,6 +349,9 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
 
   virtual const display::ScreenInfo& GetScreenInfo(LocalFrame& frame) const = 0;
   virtual const display::ScreenInfos& GetScreenInfos(
+      LocalFrame& frame) const = 0;
+
+  virtual const display::ScreenInfo& GetOriginalScreenInfo(
       LocalFrame& frame) const = 0;
 
   virtual void SetCursor(const ui::Cursor&, LocalFrame* local_root) = 0;
@@ -470,6 +485,8 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   virtual void ClosePagePopup(PagePopup*) = 0;
   virtual DOMWindow* PagePopupWindowForTesting() const = 0;
 
+  virtual void SetUseExternalPopupMenusForTesting(bool) {}
+
   virtual void SetBrowserControlsState(float top_height,
                                        float bottom_height,
                                        bool shrinks_layout) {}
@@ -538,6 +555,9 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
 
   virtual void DidUpdateBrowserControls() const {}
 
+  virtual void DidUpdateMaxSafeAreaInsets(
+      const gfx::InsetsF& max_safe_area_insets) const {}
+
   virtual void RegisterPopupOpeningObserver(PopupOpeningObserver*) = 0;
   virtual void UnregisterPopupOpeningObserver(PopupOpeningObserver*) = 0;
   virtual void NotifyPopupOpeningObservers() const = 0;
@@ -551,9 +571,13 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   }
 
   virtual void RequestDecode(LocalFrame*,
-                             const cc::PaintImage& image,
-                             base::OnceCallback<void(bool)> callback) {
+                             const cc::DrawImage& image,
+                             base::OnceCallback<void(bool)> callback,
+                             bool speculative) {
     std::move(callback).Run(false);
+  }
+  virtual bool SpeculativeDecodeRequestInFlight(LocalFrame* frame) const {
+    return false;
   }
 
   // The `callback` will be fired when the corresponding renderer frame for the
@@ -561,15 +585,9 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   // the frame to be presented, the `callback` will run with the time of the
   // failure.
   using ReportTimeCallback =
-      WTF::CrossThreadOnceFunction<void(const viz::FrameTimingDetails&)>;
+      base::OnceCallback<void(const viz::FrameTimingDetails&)>;
   virtual void NotifyPresentationTime(LocalFrame& frame,
                                       ReportTimeCallback callback) {}
-
-  // Enable or disable BeginMainFrameNotExpected signals from the compositor of
-  // the local root of |frame|. These signals would be consumed by the blink
-  // scheduler.
-  virtual void RequestBeginMainFrameNotExpected(LocalFrame& frame,
-                                                bool request) = 0;
 
   // A stable numeric Id for |frame|'s local root's compositor. For
   // tracing/debugging purposes.

@@ -113,7 +113,6 @@ TEST_F(StandardManagementPolicyProviderTest,
   // Dummy CWS extension not installed from the store
   auto extension = ExtensionBuilder("CWSPolicyInstalledExtension")
                        .SetVersion("1.0")
-                       .SetManifestVersion(3)
                        .SetLocation(ManifestLocation::kExternalPolicy)
                        .SetManifestKey("update_url",
                                        extension_urls::kChromeWebstoreUpdateURL)
@@ -197,6 +196,7 @@ TEST_F(StandardManagementPolicyProviderTest, NotRequiredExtension) {
                                                    internal.get(), nullptr));
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Tests the behavior of the ManagementPolicy provider methods for a theme
 // extension with and without a set policy theme.
 TEST_F(StandardManagementPolicyProviderTest, ThemeExtension) {
@@ -222,6 +222,7 @@ TEST_F(StandardManagementPolicyProviderTest, ThemeExtension) {
 
   EXPECT_TRUE(provider_.UserMayLoad(extension.get(), &error16));
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Tests the behavior of the ManagementPolicy provider methods for an extension
 // which manifest version is controlled by policy.

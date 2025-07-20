@@ -251,15 +251,8 @@ IN_PROC_BROWSER_TEST_F(ContentCapabilitiesTest, ClipboardWrite) {
   // script without a user gesture.
   EXPECT_TRUE(
       CanWriteClipboard(extension.get(), GetTestURLFor("bar.example.com")));
-  if (base::FeatureList::IsEnabled(
-          features::kUserActivationSameOriginVisibility)) {
-    EXPECT_TRUE(CanWriteClipboardInAboutBlankFrame(
-        extension.get(), GetTestURLFor("bar.example.com")));
-  } else {
-    // In UserActivationV2, acitvation doesn't propagate to a child frame.
-    EXPECT_FALSE(CanWriteClipboardInAboutBlankFrame(
-        extension.get(), GetTestURLFor("bar.example.com")));
-  }
+  EXPECT_TRUE(CanWriteClipboardInAboutBlankFrame(
+      extension.get(), GetTestURLFor("bar.example.com")));
 
   EXPECT_FALSE(
       CanReadClipboard(extension.get(), GetTestURLFor("foo.example.com")));
@@ -340,8 +333,7 @@ IN_PROC_BROWSER_TEST_F(ContentCapabilitiesTest, WebUnlimitedStorageIsIsolated) {
   scoped_refptr<const Extension> extension = LoadExtensionWithCapabilities(
       MakeJSONList("https://bar.example.com/*"),
       MakeJSONList("unlimitedStorage"), MakeJSONList("storage"));
-  EXPECT_FALSE(
-      HasUnlimitedStorage(extension.get(), extension->GetResourceURL("")));
+  EXPECT_FALSE(HasUnlimitedStorage(extension.get(), extension->url()));
   EXPECT_TRUE(
       HasUnlimitedStorage(extension.get(), GetTestURLFor("bar.example.com")));
 }
@@ -353,8 +345,7 @@ IN_PROC_BROWSER_TEST_F(ContentCapabilitiesTest,
       MakeJSONList("https://foo.example.com/*"), MakeJSONList("clipboardRead"),
       MakeJSONList("unlimitedStorage"));
 
-  EXPECT_TRUE(
-      HasUnlimitedStorage(extension.get(), extension->GetResourceURL("")));
+  EXPECT_TRUE(HasUnlimitedStorage(extension.get(), extension->url()));
   EXPECT_FALSE(
       HasUnlimitedStorage(extension.get(), GetTestURLFor("foo.example.com")));
 }

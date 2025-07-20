@@ -73,28 +73,28 @@ TEST(SelectorQueryTest, NotMatchingPseudoElement) {
       Document::CreateForTest(execution_context.GetExecutionContext());
   auto* html = MakeGarbageCollected<HTMLHtmlElement>(*document);
   document->AppendChild(html);
-  document->documentElement()->setInnerHTML(
+  document->documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<body><style>span::before { content: 'X' }</style><span></span></body>");
 
   HeapVector<CSSSelector> arena;
   base::span<CSSSelector> selector_vector = CSSParser::ParseSelector(
       MakeGarbageCollected<CSSParserContext>(
           *document, NullURL(), true /* origin_clean */, Referrer()),
-      CSSNestingType::kNone, /*parent_rule_for_nesting=*/nullptr,
-      /*is_within_scope=*/false, nullptr, "span::before", arena);
+      CSSNestingType::kNone, /*parent_rule_for_nesting=*/nullptr, nullptr,
+      "span::before", arena);
   CSSSelectorList* selector_list =
       CSSSelectorList::AdoptSelectorVector(selector_vector);
-  std::unique_ptr<SelectorQuery> query = SelectorQuery::Adopt(selector_list);
+  SelectorQuery* query = MakeGarbageCollected<SelectorQuery>(selector_list);
   Element* elm = query->QueryFirst(*document);
   EXPECT_EQ(nullptr, elm);
 
   selector_vector = CSSParser::ParseSelector(
       MakeGarbageCollected<CSSParserContext>(
           *document, NullURL(), true /* origin_clean */, Referrer()),
-      CSSNestingType::kNone, /*parent_rule_for_nesting=*/nullptr,
-      /*is_within_scope=*/false, nullptr, "span", arena);
+      CSSNestingType::kNone, /*parent_rule_for_nesting=*/nullptr, nullptr,
+      "span", arena);
   selector_list = CSSSelectorList::AdoptSelectorVector(selector_vector);
-  query = SelectorQuery::Adopt(selector_list);
+  query = MakeGarbageCollected<SelectorQuery>(selector_list);
   elm = query->QueryFirst(*document);
   EXPECT_NE(nullptr, elm);
 }
@@ -106,8 +106,8 @@ TEST(SelectorQueryTest, LastOfTypeNotFinishedParsing) {
       HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   auto* html = MakeGarbageCollected<HTMLHtmlElement>(*document);
   document->AppendChild(html);
-  document->documentElement()->setInnerHTML(
-      "<body><p></p><p id=last></p></body>", ASSERT_NO_EXCEPTION);
+  document->documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      "<body><p></p><p id=last></p></body>");
 
   document->body()->BeginParsingChildren();
 
@@ -115,11 +115,11 @@ TEST(SelectorQueryTest, LastOfTypeNotFinishedParsing) {
   base::span<CSSSelector> selector_vector = CSSParser::ParseSelector(
       MakeGarbageCollected<CSSParserContext>(
           *document, NullURL(), true /* origin_clean */, Referrer()),
-      CSSNestingType::kNone, /*parent_rule_for_nesting=*/nullptr,
-      /*is_within_scope=*/false, nullptr, "p:last-of-type", arena);
+      CSSNestingType::kNone, /*parent_rule_for_nesting=*/nullptr, nullptr,
+      "p:last-of-type", arena);
   CSSSelectorList* selector_list =
       CSSSelectorList::AdoptSelectorVector(selector_vector);
-  std::unique_ptr<SelectorQuery> query = SelectorQuery::Adopt(selector_list);
+  SelectorQuery* query = MakeGarbageCollected<SelectorQuery>(selector_list);
   Element* elm = query->QueryFirst(*document);
   ASSERT_TRUE(elm);
   EXPECT_EQ("last", elm->IdForStyleResolution());
@@ -346,7 +346,7 @@ TEST(SelectorQueryTest, DisconnectedSubtree) {
   auto* document =
       HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   Element* scope = document->CreateRawElement(html_names::kDivTag);
-  scope->setInnerHTML(R"HTML(
+  scope->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <section>
       <span id=first>
         <span id=A class=A></span>
@@ -378,7 +378,7 @@ TEST(SelectorQueryTest, DisconnectedTreeScope) {
   Element* host = document->CreateRawElement(html_names::kDivTag);
   ShadowRoot& shadowRoot =
       host->AttachShadowRootForTesting(ShadowRootMode::kOpen);
-  shadowRoot.setInnerHTML(R"HTML(
+  shadowRoot.SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <section>
       <span id=first>
         <span id=A class=A></span>

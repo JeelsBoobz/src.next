@@ -28,17 +28,13 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/css/rule_set.h"
 
 #include <memory>
 #include <type_traits>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/substring_set_matcher/substring_set_matcher.h"
 #include "third_party/blink/public/common/features.h"
@@ -97,12 +93,8 @@ static inline ValidPropertyFilter DetermineValidPropertyFilter(
       case CSSSelector::kPseudoGrammarError:
       case CSSSelector::kPseudoSpellingError:
       case CSSSelector::kPseudoHighlight:
-        if (UsesHighlightPseudoInheritance(
-                component->GetPseudoId(component->GetPseudoType()))) {
-          return ValidPropertyFilter::kHighlight;
-        } else {
-          return ValidPropertyFilter::kHighlightLegacy;
-        }
+      case CSSSelector::kPseudoSearchText:
+        return ValidPropertyFilter::kHighlight;
       default:
         break;
     }
@@ -120,14 +112,41 @@ static bool SelectorListHasLinkOrVisited(const CSSSelector* selector_list) {
   return false;
 }
 
+static bool SelectorListHasVisited(const CSSSelector* selector_list) {
+  for (const CSSSelector* complex = selector_list; complex;
+       complex = CSSSelectorList::Next(*complex)) {
+    if (complex->HasVisited()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 static bool StyleScopeHasLinkOrVisited(const StyleScope* style_scope) {
   return style_scope && (SelectorListHasLinkOrVisited(style_scope->From()) ||
                          SelectorListHasLinkOrVisited(style_scope->To()));
 }
 
+static bool StyleScopeHasVisited(const StyleScope* style_scope) {
+  return style_scope && (SelectorListHasVisited(style_scope->From()) ||
+                         SelectorListHasVisited(style_scope->To()));
+}
+
 static unsigned DetermineLinkMatchType(const AddRuleFlags add_rule_flags,
                                        const CSSSelector& selector,
                                        const StyleScope* style_scope) {
+  if (RuntimeEnabledFeatures::CSSDoNotHideVisitedColorEnabled()) {
+    // When this flag is on, RuleDatas are never added with
+    // kRuleIsVisitedDependent; we have exactly one RuleData per selector,
+    // and its LinkMatchType is truthful (i.e., specifies whether we
+    // have :visited or not; we don't care about :link and can eventually
+    // remove kMatchLink when the flag goes permanent).
+    if (selector.HasVisited() || StyleScopeHasVisited(style_scope)) {
+      return CSSSelector::kMatchVisited;
+    } else {
+      return CSSSelector::kMatchAll;
+    }
+  }
   if (selector.HasLinkOrVisited() || StyleScopeHasLinkOrVisited(style_scope)) {
     return (add_rule_flags & kRuleIsVisitedDependent)
                ? CSSSelector::kMatchVisited
@@ -141,7 +160,7 @@ RuleData::RuleData(StyleRule* rule,
                    unsigned position,
                    const StyleScope* style_scope,
                    AddRuleFlags add_rule_flags,
-                   Vector<unsigned>& bloom_hash_backing)
+                   Vector<uint16_t>& bloom_hash_backing)
     : rule_(rule),
       selector_index_(selector_index),
       position_(position),
@@ -184,14 +203,14 @@ void RuleData::ResetEntirelyCoveredByBucketing() {
 }
 
 void RuleData::ComputeBloomFilterHashes(const StyleScope* style_scope,
-                                        Vector<unsigned>& bloom_hash_backing) {
+                                        Vector<uint16_t>& bloom_hash_backing) {
   if (bloom_hash_backing.size() >= 16777216) {
     // This won't fit into bloom_hash_pos_, so don't collect any hashes.
     return;
   }
   bloom_hash_pos_ = bloom_hash_backing.size();
   SelectorFilter::CollectIdentifierHashes(Selector(), style_scope,
-                                          bloom_hash_backing);
+                                          bloom_hash_backing, subject_filter_);
 
   // The clamp here is purely for safety; a real rule would never have
   // as many as 255 descendant selectors.
@@ -205,20 +224,21 @@ void RuleData::ComputeBloomFilterHashes(const StyleScope* style_scope,
   // captures most of the benefits. (It is fairly common, especially with
   // nesting, to have the same sets of parents in consecutive rules.)
   if (bloom_hash_size_ > 0 && bloom_hash_pos_ >= bloom_hash_size_ &&
-      std::equal(
+      UNSAFE_TODO(std::equal(
           bloom_hash_backing.begin() + bloom_hash_pos_ - bloom_hash_size_,
           bloom_hash_backing.begin() + bloom_hash_pos_,
-          bloom_hash_backing.begin() + bloom_hash_pos_)) {
+          bloom_hash_backing.begin() + bloom_hash_pos_))) {
     bloom_hash_backing.resize(bloom_hash_pos_);
     bloom_hash_pos_ -= bloom_hash_size_;
   }
 }
 
-void RuleData::MovedToDifferentRuleSet(const Vector<unsigned>& old_backing,
-                                       Vector<unsigned>& new_backing,
+void RuleData::MovedToDifferentRuleSet(const Vector<uint16_t>& old_backing,
+                                       Vector<uint16_t>& new_backing,
                                        unsigned new_position) {
   unsigned new_pos = new_backing.size();
-  new_backing.insert(new_backing.size(), old_backing.data() + bloom_hash_pos_,
+  new_backing.insert(new_backing.size(),
+                     UNSAFE_TODO(old_backing.data() + bloom_hash_pos_),
                      bloom_hash_size_);
   bloom_hash_pos_ = new_pos;
   position_ = new_position;
@@ -254,7 +274,74 @@ void RuleSet::AddToRuleSet(HeapVector<RuleData>& rules,
   need_compaction_ = true;
 }
 
-static void ExtractSelectorValues(const CSSSelector* selector,
+namespace {
+
+// Pseudo-elements that should stop extracting bucketing information
+// from selector after themselves, as they allow some pseudo-classes after them
+// in selector, which can confuse bucketing (for now, if you have to add a new
+// PseudoType here, the rule is: if it creates a PseudoElement object - return
+// true, otherwise - return false).
+bool ShouldStopExtractingAtPseudoElement(
+    const CSSSelector::PseudoType& pseudo_type) {
+  switch (pseudo_type) {
+    case CSSSelector::kPseudoCheckMark:
+    case CSSSelector::kPseudoPickerIcon:
+    case CSSSelector::kPseudoFirstLetter:
+    case CSSSelector::kPseudoScrollButton:
+    case CSSSelector::kPseudoScrollMarker:
+    case CSSSelector::kPseudoAfter:
+    case CSSSelector::kPseudoBefore:
+    case CSSSelector::kPseudoBackdrop:
+    case CSSSelector::kPseudoMarker:
+    case CSSSelector::kPseudoColumn:
+    case CSSSelector::kPseudoViewTransition:
+    case CSSSelector::kPseudoViewTransitionGroup:
+    case CSSSelector::kPseudoViewTransitionGroupChildren:
+    case CSSSelector::kPseudoViewTransitionImagePair:
+    case CSSSelector::kPseudoViewTransitionNew:
+    case CSSSelector::kPseudoViewTransitionOld:
+    case CSSSelector::kPseudoScrollMarkerGroup:
+      return true;
+    case CSSSelector::kPseudoCue:
+    case CSSSelector::kPseudoFirstLine:
+    case CSSSelector::kPseudoSelection:
+    case CSSSelector::kPseudoScrollbar:
+    case CSSSelector::kPseudoScrollbarButton:
+    case CSSSelector::kPseudoScrollbarCorner:
+    case CSSSelector::kPseudoScrollbarThumb:
+    case CSSSelector::kPseudoScrollbarTrack:
+    case CSSSelector::kPseudoScrollbarTrackPiece:
+    case CSSSelector::kPseudoSlotted:
+    case CSSSelector::kPseudoPart:
+    case CSSSelector::kPseudoResizer:
+    case CSSSelector::kPseudoSearchText:
+    case CSSSelector::kPseudoTargetText:
+    case CSSSelector::kPseudoHighlight:
+    case CSSSelector::kPseudoSpellingError:
+    case CSSSelector::kPseudoGrammarError:
+    case CSSSelector::kPseudoPlaceholder:
+    case CSSSelector::kPseudoFileSelectorButton:
+    case CSSSelector::kPseudoDetailsContent:
+    case CSSSelector::kPseudoPermissionIcon:
+    case CSSSelector::kPseudoPicker:
+    case CSSSelector::kPseudoWebKitCustomElement:
+    case CSSSelector::kPseudoBlinkInternalElement:
+      return false;
+    default:
+      NOTREACHED()
+          << "Don't forget to add new pseudo-element type in this switch "
+          << static_cast<wtf_size_t>(pseudo_type);
+  }
+}
+
+}  // namespace
+
+// The return value indicates if extracting can continue
+// or should be stopped due to reaching some pseudo-element
+// that doesn't allow extracting bucketing rules after itself
+// in selector.
+static bool ExtractSelectorValues(const CSSSelector* selector,
+                                  const StyleScope* style_scope,
                                   AtomicString& id,
                                   AtomicString& class_name,
                                   AtomicString& attr_name,
@@ -265,7 +352,6 @@ static void ExtractSelectorValues(const CSSSelector* selector,
                                   AtomicString& part_name,
                                   AtomicString& picker_name,
                                   CSSSelector::PseudoType& pseudo_type) {
-  is_exact_attr = false;
   switch (selector->Match()) {
     case CSSSelector::kId:
       id = selector->Value();
@@ -274,23 +360,20 @@ static void ExtractSelectorValues(const CSSSelector* selector,
       class_name = selector->Value();
       break;
     case CSSSelector::kTag:
-      if (selector->TagQName().LocalName() !=
-          CSSSelector::UniversalSelectorAtom()) {
-        tag_name = selector->TagQName().LocalName();
-      }
+      tag_name = selector->TagQName().LocalName();
       break;
-    case CSSSelector::kPseudoClass:
     case CSSSelector::kPseudoElement:
+      // TODO(403505399): We shouldn't allow bucketing of pseudo-classes
+      // after pseudo-elements for now, as it confuses bucketing.
+      if (ShouldStopExtractingAtPseudoElement(selector->GetPseudoType())) {
+        return false;
+      }
+      [[fallthrough]];
+    case CSSSelector::kPseudoClass:
     case CSSSelector::kPagePseudoClass:
       // Must match the cases in RuleSet::FindBestRuleSetAndAdd.
       switch (selector->GetPseudoType()) {
         case CSSSelector::kPseudoFocus:
-          if (pseudo_type == CSSSelector::kPseudoScrollMarker ||
-              pseudo_type == CSSSelector::kPseudoScrollNextButton ||
-              pseudo_type == CSSSelector::kPseudoScrollPrevButton) {
-            break;
-          }
-          [[fallthrough]];
         case CSSSelector::kPseudoCue:
         case CSSSelector::kPseudoLink:
         case CSSSelector::kPseudoVisited:
@@ -299,15 +382,18 @@ static void ExtractSelectorValues(const CSSSelector* selector,
         case CSSSelector::kPseudoFocusVisible:
         case CSSSelector::kPseudoPlaceholder:
         case CSSSelector::kPseudoDetailsContent:
+        case CSSSelector::kPseudoPermissionIcon:
         case CSSSelector::kPseudoFileSelectorButton:
         case CSSSelector::kPseudoHost:
         case CSSSelector::kPseudoHostContext:
         case CSSSelector::kPseudoSlotted:
         case CSSSelector::kPseudoSelectorFragmentAnchor:
         case CSSSelector::kPseudoRoot:
-        case CSSSelector::kPseudoScrollMarker:
-        case CSSSelector::kPseudoScrollNextButton:
-        case CSSSelector::kPseudoScrollPrevButton:
+        case CSSSelector::kPseudoScrollbarButton:
+        case CSSSelector::kPseudoScrollbarCorner:
+        case CSSSelector::kPseudoScrollbarThumb:
+        case CSSSelector::kPseudoScrollbarTrack:
+        case CSSSelector::kPseudoScrollbarTrackPiece:
           pseudo_type = selector->GetPseudoType();
           break;
         case CSSSelector::kPseudoWebKitCustomElement:
@@ -321,19 +407,53 @@ static void ExtractSelectorValues(const CSSSelector* selector,
           picker_name = selector->Argument();
           break;
         case CSSSelector::kPseudoIs:
-        case CSSSelector::kPseudoWhere: {
-          const CSSSelectorList* selector_list = selector->SelectorList();
-          DCHECK(selector_list);
+        case CSSSelector::kPseudoWhere:
+        case CSSSelector::kPseudoParent: {
+          const CSSSelector* selector_list = selector->SelectorListOrParent();
           // If the :is/:where has only a single argument, it effectively acts
           // like a normal selector (save for specificity), and we can put it
           // into a bucket based on that selector.
-          if (selector_list->HasOneSelector()) {
-            ExtractSelectorValues(selector_list->First(), id, class_name,
-                                  attr_name, attr_value, is_exact_attr,
-                                  custom_pseudo_element_name, tag_name,
-                                  part_name, picker_name, pseudo_type);
+          //
+          // Note that `selector_list` may be nullptr for top-level '&'
+          // selectors.
+          //
+          // Note also that FindBestRuleSetAndAdd assumes that you cannot
+          // reach a pseudo-element via a '&' selector (crbug.com/380107557).
+          // We ensure that this cannot happen by never adding rules
+          // like '::before { & {} }' to the RuleSet in the first place,
+          // see CollectMetadataFromSelector. Rules with mixed
+          // allowed/disallowed selectors, e.g. '::before, .foo { & {} }',
+          // *are* added to the RuleSet, but fail the IsSingleComplexSelector
+          // check below, satisfying the assumptions of FindBestRuleSetAndAdd.
+          if (selector_list &&
+              CSSSelectorList::IsSingleComplexSelector(*selector_list)) {
+            bool should_continue = ExtractSelectorValues(
+                selector_list, style_scope, id, class_name, attr_name,
+                attr_value, is_exact_attr, custom_pseudo_element_name, tag_name,
+                part_name, picker_name, pseudo_type);
+            CHECK(should_continue);
           }
-        } break;
+          break;
+        }
+        case CSSSelector::kPseudoScope: {
+          // Just like :is() and :where(), we can bucket :scope as the
+          // <scope-start> it refers to, as long as the <scope-start>
+          // contains a single selector.
+          //
+          // Note that the <scope-start> selector is optional, therefore
+          // From() may return nullptr below.
+          const CSSSelector* selector_list =
+              style_scope ? style_scope->From() : nullptr;
+          if (selector_list &&
+              CSSSelectorList::IsSingleComplexSelector(*selector_list)) {
+            bool should_continue = ExtractSelectorValues(
+                selector_list, style_scope, id, class_name, attr_name,
+                attr_value, is_exact_attr, custom_pseudo_element_name, tag_name,
+                part_name, picker_name, pseudo_type);
+            CHECK(should_continue);
+          }
+          break;
+        }
         default:
           break;
       }
@@ -343,19 +463,19 @@ static void ExtractSelectorValues(const CSSSelector* selector,
       attr_value = g_empty_atom;
       break;
     case CSSSelector::kAttributeExact:
-      is_exact_attr = true;
-      [[fallthrough]];
     case CSSSelector::kAttributeHyphen:
     case CSSSelector::kAttributeList:
     case CSSSelector::kAttributeContain:
     case CSSSelector::kAttributeBegin:
     case CSSSelector::kAttributeEnd:
+      is_exact_attr = (selector->Match() == CSSSelector::kAttributeExact);
       attr_name = selector->Attribute().LocalName();
       attr_value = selector->Value();
       break;
     default:
       break;
   }
+  return true;
 }
 
 // For a (possibly compound) selector, extract the values used for determining
@@ -364,6 +484,7 @@ static void ExtractSelectorValues(const CSSSelector* selector,
 // the one given the highest priority.
 static const CSSSelector* ExtractBestSelectorValues(
     const CSSSelector& component,
+    const StyleScope* style_scope,
     AtomicString& id,
     AtomicString& class_name,
     AtomicString& attr_name,
@@ -377,14 +498,17 @@ static const CSSSelector* ExtractBestSelectorValues(
   const CSSSelector* it = &component;
   for (; it && it->Relation() == CSSSelector::kSubSelector;
        it = it->NextSimpleSelector()) {
-    ExtractSelectorValues(it, id, class_name, attr_name, attr_value,
-                          is_exact_attr, custom_pseudo_element_name, tag_name,
-                          part_name, picker_name, pseudo_type);
+    if (!ExtractSelectorValues(it, style_scope, id, class_name, attr_name,
+                               attr_value, is_exact_attr,
+                               custom_pseudo_element_name, tag_name, part_name,
+                               picker_name, pseudo_type)) {
+      return it;
+    }
   }
   if (it) {
-    ExtractSelectorValues(it, id, class_name, attr_name, attr_value,
-                          is_exact_attr, custom_pseudo_element_name, tag_name,
-                          part_name, picker_name, pseudo_type);
+    ExtractSelectorValues(it, style_scope, id, class_name, attr_name,
+                          attr_value, is_exact_attr, custom_pseudo_element_name,
+                          tag_name, part_name, picker_name, pseudo_type);
   }
   return it;
 }
@@ -393,7 +517,7 @@ template <class Func>
 static void MarkAsCoveredByBucketing(CSSSelector& selector,
                                      Func&& should_mark_func) {
   for (CSSSelector* s = &selector;;
-       ++s) {  // Termination condition within loop.
+       UNSAFE_TODO(++s)) {  // Termination condition within loop.
     if (should_mark_func(*s)) {
       s->SetCoveredByBucketing(true);
     }
@@ -417,7 +541,7 @@ static void MarkAsCoveredByBucketing(CSSSelector& selector,
 
 static void UnmarkAsCoveredByBucketing(CSSSelector& selector) {
   for (CSSSelector* s = &selector;;
-       ++s) {  // Termination condition within loop.
+       UNSAFE_TODO(++s)) {  // Termination condition within loop.
     s->SetCoveredByBucketing(false);
     if (s->IsLastInComplexSelector() ||
         s->Relation() != CSSSelector::kSubSelector) {
@@ -428,7 +552,8 @@ static void UnmarkAsCoveredByBucketing(CSSSelector& selector) {
 
 template <RuleSet::BucketCoverage bucket_coverage>
 void RuleSet::FindBestRuleSetAndAdd(CSSSelector& component,
-                                    const RuleData& rule_data) {
+                                    const RuleData& rule_data,
+                                    const StyleScope* style_scope) {
   AtomicString id;
   AtomicString class_name;
   AtomicString attr_name;
@@ -443,13 +568,49 @@ void RuleSet::FindBestRuleSetAndAdd(CSSSelector& component,
   all_rules_.push_back(rule_data);
 #endif  // DCHECK_IS_ON()
 
-  bool is_exact_attr;
+  bool is_exact_attr = false;
   const CSSSelector* it = ExtractBestSelectorValues(
-      component, id, class_name, attr_name, attr_value, is_exact_attr,
-      custom_pseudo_element_name, tag_name, part_name, picker_name,
-      pseudo_type);
+      component, style_scope, id, class_name, attr_name, attr_value,
+      is_exact_attr, custom_pseudo_element_name, tag_name, part_name,
+      picker_name, pseudo_type);
 
   // Prefer rule sets in order of most likely to apply infrequently.
+
+  // NOTE: For ::part:focus and similar, we need to go into the ::part bucket
+  // (see below). This isn't a problem for #id::part and similar, since there is
+  // a hidden combinator that stops ExtractBestSelectorValues() before it finds
+  // the #id.
+  if (part_name.empty()) {
+    if (pseudo_type == CSSSelector::kPseudoFocus) {
+      if (bucket_coverage == BucketCoverage::kCompute) {
+        MarkAsCoveredByBucketing(component, [](const CSSSelector& selector) {
+          return selector.Match() == CSSSelector::kPseudoClass &&
+                 selector.GetPseudoType() == CSSSelector::kPseudoFocus;
+        });
+      }
+      AddToRuleSet(focus_pseudo_class_rules_, rule_data);
+      return;
+    }
+    if (pseudo_type == CSSSelector::kPseudoFocusVisible) {
+      if (bucket_coverage == BucketCoverage::kCompute) {
+        MarkAsCoveredByBucketing(component, [](const CSSSelector& selector) {
+          return selector.Match() == CSSSelector::kPseudoClass &&
+                 selector.GetPseudoType() == CSSSelector::kPseudoFocusVisible;
+        });
+      }
+      AddToRuleSet(focus_visible_pseudo_class_rules_, rule_data);
+      return;
+    }
+    if (pseudo_type == CSSSelector::kPseudoScrollbarButton ||
+        pseudo_type == CSSSelector::kPseudoScrollbarCorner ||
+        pseudo_type == CSSSelector::kPseudoScrollbarThumb ||
+        pseudo_type == CSSSelector::kPseudoScrollbarTrack ||
+        pseudo_type == CSSSelector::kPseudoScrollbarTrackPiece) {
+      AddToRuleSet(scrollbar_rules_, rule_data);
+      return;
+    }
+  }
+
   if (!id.empty()) {
     if (bucket_coverage == BucketCoverage::kCompute) {
       MarkAsCoveredByBucketing(component, [&id](const CSSSelector& selector) {
@@ -473,6 +634,25 @@ void RuleSet::FindBestRuleSetAndAdd(CSSSelector& component,
   }
 
   if (!attr_name.empty()) {
+    // input[type="<foo>"] have their own RuleMap.
+    if (tag_name == html_names::kInputTag.LocalName() &&
+        attr_name == html_names::kTypeAttr.LocalName() && is_exact_attr) {
+      // Same logic as tag_name below. Note that this will not
+      // mark the rules in the UA stylesheet as covered by bucketing
+      // (because they only match elements in the HTML namespace),
+      // even though they are the most common input[type="<foo>"] rules.
+      if (bucket_coverage == BucketCoverage::kCompute) {
+        MarkAsCoveredByBucketing(component, [](const CSSSelector& selector) {
+          return selector.Match() == CSSSelector::kTag &&
+                 selector.TagQName().LocalName() ==
+                     html_names::kInputTag.LocalName() &&
+                 selector.TagQName().NamespaceURI() == g_star_atom;
+        });
+      }
+      AddToRuleSet(attr_value.LowerASCII(), input_rules_, rule_data);
+      return;
+    }
+
     AddToRuleSet(attr_name, attr_rules_, rule_data);
     if (attr_name == html_names::kStyleAttr) {
       has_bucket_for_style_attr_ = true;
@@ -496,37 +676,28 @@ void RuleSet::FindBestRuleSetAndAdd(CSSSelector& component,
 
   AtomicString ua_shadow_pseudo = get_ua_shadow_pseudo();
 
-  if (RuntimeEnabledFeatures::CSSCascadeCorrectScopeEnabled()) {
-    // Any selector with or following ::part() or a UA shadow pseudo-element
-    // must go in the bucket for the *innermost* such pseudo-element.
+  // Any selector with or following ::part() or a UA shadow pseudo-element
+  // must go in the bucket for the *innermost* such pseudo-element.
 
-    // TODO(dbaron): Should this eventually check kShadowSlot as well?
-    if (part_name.empty() && ua_shadow_pseudo == g_null_atom && it &&
-        (it->Relation() == CSSSelector::RelationType::kUAShadow ||
-         it->Relation() == CSSSelector::RelationType::kShadowPart)) {
-      const CSSSelector* previous = it->NextSimpleSelector();
-      if (previous->Match() == CSSSelector::kPseudoElement) {
-        ExtractSelectorValues(previous, id, class_name, attr_name, attr_value,
-                              is_exact_attr, custom_pseudo_element_name,
-                              tag_name, part_name, picker_name, pseudo_type);
-        ua_shadow_pseudo = get_ua_shadow_pseudo();
-      }
+  // TODO(dbaron): Should this eventually check kShadowSlot as well?
+  if (part_name.empty() && ua_shadow_pseudo == g_null_atom && it &&
+      (it->Relation() == CSSSelector::RelationType::kUAShadow ||
+       it->Relation() == CSSSelector::RelationType::kShadowPart)) {
+    const CSSSelector* previous = it->NextSimpleSelector();
+    if (previous->Match() == CSSSelector::kPseudoElement) {
+      ExtractSelectorValues(previous, style_scope, id, class_name, attr_name,
+                            attr_value, is_exact_attr,
+                            custom_pseudo_element_name, tag_name, part_name,
+                            picker_name, pseudo_type);
+      ua_shadow_pseudo = get_ua_shadow_pseudo();
     }
   }
 
   // Any selector with or following ::part() must go in the part bucket,
   // because we look in that bucket in higher scopes to find rules that need
   // to match inside the shadow tree.
-  if (!part_name.empty() ||
-      (it && it->FollowsPart() &&
-       !RuntimeEnabledFeatures::CSSCascadeCorrectScopeEnabled())) {
-    // NOTE: Cannot mark as covered by bucketing because the part buckets are
-    // shared between the part itself and pseudo-elements inside of them.
-    // (Though we do check at least some of the relevant conditions *before*
-    // we check whether the selector is covered by bucketing, so it might be
-    // doable if we want.)
-    // TODO(https://crbug.com/40280846): When the CSSCascadeCorrectScope flag
-    // is removed (and enabled), we can revisit this.
+  if (!part_name.empty()) {
+    // TODO: Mark as covered by bucketing?
     AddToRuleSet(part_pseudo_rules_, rule_data);
     return;
   }
@@ -548,6 +719,7 @@ void RuleSet::FindBestRuleSetAndAdd(CSSSelector& component,
     // TODO(dbaron): This needs further work to support multiple
     // pseudo-elements after ::slotted().  This likely requires reorganization
     // of how MatchSlottedRules interacts with MatchOuterScopeRules.
+    CHECK(it);
     if (it->FollowsSlotted()) {
       AddToRuleSet(slotted_pseudo_element_rules_, rule_data);
     } else {
@@ -579,25 +751,12 @@ void RuleSet::FindBestRuleSetAndAdd(CSSSelector& component,
       AddToRuleSet(link_pseudo_class_rules_, rule_data);
       return;
     case CSSSelector::kPseudoFocus:
-      if (bucket_coverage == BucketCoverage::kCompute) {
-        MarkAsCoveredByBucketing(component, [](const CSSSelector& selector) {
-          return selector.Match() == CSSSelector::kPseudoClass &&
-                 selector.GetPseudoType() == CSSSelector::kPseudoFocus;
-        });
-      }
-      AddToRuleSet(focus_pseudo_class_rules_, rule_data);
+    case CSSSelector::kPseudoFocusVisible:
+      // Was handled above.
+      NOTREACHED();
       return;
     case CSSSelector::kPseudoSelectorFragmentAnchor:
       AddToRuleSet(selector_fragment_anchor_rules_, rule_data);
-      return;
-    case CSSSelector::kPseudoFocusVisible:
-      if (bucket_coverage == BucketCoverage::kCompute) {
-        MarkAsCoveredByBucketing(component, [](const CSSSelector& selector) {
-          return selector.Match() == CSSSelector::kPseudoClass &&
-                 selector.GetPseudoType() == CSSSelector::kPseudoFocusVisible;
-        });
-      }
-      AddToRuleSet(focus_visible_pseudo_class_rules_, rule_data);
       return;
     case CSSSelector::kPseudoHost:
     case CSSSelector::kPseudoHostContext:
@@ -634,10 +793,9 @@ void RuleSet::FindBestRuleSetAndAdd(CSSSelector& component,
     return;
   }
 
-  // The selector parser prepends a :true pseudo-class with
-  // relation=kScopeActivation to any compound that contains :scope
-  // or the parent pseudo-class (&).
-  if (component.Relation() == CSSSelector::kScopeActivation) {
+  // The ':scope' pseudo-class (bucketed as universal) may match the host
+  // when the selector is scoped (e.g. using '@scope') to that host.
+  if (component.IsScopeContaining()) {
     must_check_universal_bucket_for_shadow_host_ = true;
   }
 
@@ -651,7 +809,7 @@ void RuleSet::FindBestRuleSetAndAdd(CSSSelector& component,
   // If we didn't find a specialized map to stick it in, file under universal
   // rules.
   MarkAsCoveredByBucketing(component, [](const CSSSelector& selector) {
-    return selector.Match() == CSSSelector::kTag &&
+    return selector.Match() == CSSSelector::kUniversalTag &&
            selector.TagQName() == AnyQName();
   });
   AddToRuleSet(universal_rules_, rule_data);
@@ -686,24 +844,27 @@ void RuleSet::AddRule(StyleRule* rule,
   }
 
   FindBestRuleSetAndAdd<BucketCoverage::kCompute>(rule_data.MutableSelector(),
-                                                  rule_data);
+                                                  rule_data, style_scope);
 
-  // If the rule has CSSSelector::kMatchLink, it means that there is a :visited
-  // or :link pseudo-class somewhere in the selector. In those cases, we
-  // effectively split the rule into two: one which covers the situation
-  // where we are in an unvisited link (kMatchLink), and another which covers
-  // the visited link case (kMatchVisited).
-  if (rule_data.LinkMatchType() == CSSSelector::kMatchLink) {
-    // Now the selector will be in two buckets.
-    rule_data.ResetEntirelyCoveredByBucketing();
+  if (!RuntimeEnabledFeatures::CSSDoNotHideVisitedColorEnabled()) {
+    // If the rule has CSSSelector::kMatchLink, it means that there is a
+    // :visited or :link pseudo-class somewhere in the selector. In those cases,
+    // we effectively split the rule into two: one which covers the situation
+    // where we are in an unvisited link (kMatchLink), and another which covers
+    // the visited link case (kMatchVisited).
+    if (rule_data.LinkMatchType() == CSSSelector::kMatchLink) {
+      // Now the selector will be in two buckets.
+      rule_data.ResetEntirelyCoveredByBucketing();
 
-    RuleData visited_dependent(
-        rule, rule_data.SelectorIndex(), rule_data.GetPosition(), style_scope,
-        add_rule_flags | kRuleIsVisitedDependent, bloom_hash_backing_);
-    // Since the selector now is in two buckets, we use BucketCoverage::kIgnore
-    // to prevent CSSSelector::is_covered_by_bucketing_ from being set.
-    FindBestRuleSetAndAdd<BucketCoverage::kIgnore>(
-        visited_dependent.MutableSelector(), visited_dependent);
+      RuleData visited_dependent(
+          rule, rule_data.SelectorIndex(), rule_data.GetPosition(), style_scope,
+          add_rule_flags | kRuleIsVisitedDependent, bloom_hash_backing_);
+      // Since the selector now is in two buckets, we use
+      // BucketCoverage::kIgnore to prevent
+      // CSSSelector::is_covered_by_bucketing_ from being set.
+      FindBestRuleSetAndAdd<BucketCoverage::kIgnore>(
+          visited_dependent.MutableSelector(), visited_dependent, style_scope);
+    }
   }
 
   AddRuleToLayerIntervals(cascade_layer, rule_data.GetPosition());
@@ -793,7 +954,7 @@ void RuleSet::AddViewTransitionRule(StyleRuleViewTransition* rule) {
 }
 
 void RuleSet::AddChildRules(StyleRule* parent_rule,
-                            const HeapVector<Member<StyleRuleBase>>& rules,
+                            base::span<const Member<StyleRuleBase>> rules,
                             const MediaQueryEvaluator& medium,
                             AddRuleFlags add_rule_flags,
                             const ContainerQuery* container_query,
@@ -844,7 +1005,7 @@ void RuleSet::AddChildRules(StyleRule* parent_rule,
       position_try_rule->SetCascadeLayer(cascade_layer);
       AddPositionTryRule(position_try_rule);
     } else if (auto* function_rule = DynamicTo<StyleRuleFunction>(rule)) {
-      // TODO(sesse): Set the cascade layer here?
+      function_rule->SetCascadeLayer(cascade_layer);
       AddFunctionRule(function_rule);
     } else if (auto* supports_rule = DynamicTo<StyleRuleSupports>(rule)) {
       if (supports_rule->ConditionIsSupported()) {
@@ -922,9 +1083,10 @@ bool RuleSet::MatchMediaForAddRules(const MediaQueryEvaluator& evaluator,
   return match_media;
 }
 
-void RuleSet::AddRulesFromSheet(StyleSheetContents* sheet,
+void RuleSet::AddRulesFromSheet(const StyleSheetContents* sheet,
                                 const MediaQueryEvaluator& medium,
-                                CascadeLayer* cascade_layer) {
+                                CascadeLayer* cascade_layer,
+                                const StyleScope* style_scope) {
   TRACE_EVENT0("blink", "RuleSet::addRulesFromSheet");
   DCHECK(sheet);
 
@@ -950,13 +1112,15 @@ void RuleSet::AddRulesFromSheet(StyleSheetContents* sheet,
           GetOrAddSubLayer(cascade_layer, import_rule->GetLayerName());
     }
     if (import_rule->GetStyleSheet()) {
-      AddRulesFromSheet(import_rule->GetStyleSheet(), medium, import_layer);
+      AddRulesFromSheet(import_rule->GetStyleSheet(), medium, import_layer,
+                        import_rule->GetScope());
     }
   }
 
+  InvalidationSetToSelectorMap::StyleSheetContentsScope contents_scope(sheet);
   AddChildRules(/*parent_rule=*/nullptr, sheet->ChildRules(), medium,
                 kRuleHasNoSpecialState, nullptr /* container_query */,
-                cascade_layer, nullptr, /*within_mixin=*/false);
+                cascade_layer, style_scope, /*within_mixin=*/false);
 }
 
 // If there's a reference to the parent selector (implicit or explicit)
@@ -975,7 +1139,7 @@ const StyleRule* FindParentIfUsed(const CSSSelector* selector) {
         return parent;
       }
     }
-  } while (!(selector++)->IsLastInSelectorList());
+  } while (!UNSAFE_TODO((selector++)->IsLastInSelectorList()));
   return nullptr;
 }
 
@@ -1040,6 +1204,8 @@ void RuleSet::AddFilteredRulesFromOtherSet(
     // NOTE: attr_substring_matchers_ will be rebuilt in CompactRules().
     tag_rules_.AddFilteredRulesFromOtherSet(other.tag_rules_, only_include,
                                             other, *this);
+    input_rules_.AddFilteredRulesFromOtherSet(other.input_rules_, only_include,
+                                              other, *this);
     ua_shadow_pseudo_element_rules_.AddFilteredRulesFromOtherSet(
         other.ua_shadow_pseudo_element_rules_, only_include, other, *this);
     AddFilteredRulesFromOtherBucket(other, other.link_pseudo_class_rules_,
@@ -1051,6 +1217,8 @@ void RuleSet::AddFilteredRulesFromOtherSet(
     AddFilteredRulesFromOtherBucket(
         other, other.focus_visible_pseudo_class_rules_, only_include,
         &focus_visible_pseudo_class_rules_);
+    AddFilteredRulesFromOtherBucket(other, other.scrollbar_rules_, only_include,
+                                    &scrollbar_rules_);
     AddFilteredRulesFromOtherBucket(other, other.universal_rules_, only_include,
                                     &universal_rules_);
     AddFilteredRulesFromOtherBucket(other, other.shadow_host_rules_,
@@ -1086,8 +1254,7 @@ void RuleSet::AddStyleRule(StyleRule* style_rule,
                            CascadeLayer* cascade_layer,
                            const StyleScope* style_scope) {
   if (within_mixin) {
-    style_rule = style_rule->Copy();
-    style_rule->Reparent(parent_rule);
+    style_rule = To<StyleRule>(style_rule->Renest(parent_rule));
   }
   for (const CSSSelector* selector = style_rule->FirstSelector(); selector;
        selector = CSSSelectorList::Next(*selector)) {
@@ -1306,6 +1473,7 @@ bool RuleSet::CanIgnoreEntireList(base::span<const RuleData> list,
 
 void RuleSet::CreateSubstringMatchers(
     RuleMap& attr_map,
+    const HeapVector<Interval<StyleScope>>& scope_intervals,
     RuleSet::SubstringMatcherMap& substring_matcher_map) {
   for (const auto& [/*AtomicString*/ attr,
                     /*base::span<const RuleData>*/ ruleset] : attr_map) {
@@ -1314,6 +1482,7 @@ void RuleSet::CreateSubstringMatchers(
     }
     std::vector<MatcherStringPattern> patterns;
     int rule_index = 0;
+    Seeker<StyleScope> scope_seeker(scope_intervals);
     for (const RuleData& rule : ruleset) {
       AtomicString id;
       AtomicString class_name;
@@ -1323,10 +1492,11 @@ void RuleSet::CreateSubstringMatchers(
       AtomicString tag_name;
       AtomicString part_name;
       AtomicString picker_name;
-      bool is_exact_attr;
+      bool is_exact_attr = false;
       CSSSelector::PseudoType pseudo_type = CSSSelector::kPseudoUnknown;
-      ExtractBestSelectorValues(rule.Selector(), id, class_name, attr_name,
-                                attr_value, is_exact_attr,
+      const StyleScope* style_scope = scope_seeker.Seek(rule.GetPosition());
+      ExtractBestSelectorValues(rule.Selector(), style_scope, id, class_name,
+                                attr_name, attr_value, is_exact_attr,
                                 custom_pseudo_element_name, tag_name, part_name,
                                 picker_name, pseudo_type);
       DCHECK(!attr_name.empty());
@@ -1381,14 +1551,17 @@ void RuleSet::CompactRules() {
   id_rules_.Compact();
   class_rules_.Compact();
   attr_rules_.Compact();
-  CreateSubstringMatchers(attr_rules_, attr_substring_matchers_);
+  CreateSubstringMatchers(attr_rules_, scope_intervals_,
+                          attr_substring_matchers_);
   tag_rules_.Compact();
+  input_rules_.Compact();
   ua_shadow_pseudo_element_rules_.Compact();
   link_pseudo_class_rules_.shrink_to_fit();
   cue_pseudo_rules_.shrink_to_fit();
   focus_pseudo_class_rules_.shrink_to_fit();
   selector_fragment_anchor_rules_.shrink_to_fit();
   focus_visible_pseudo_class_rules_.shrink_to_fit();
+  scrollbar_rules_.shrink_to_fit();
   universal_rules_.shrink_to_fit();
   shadow_host_rules_.shrink_to_fit();
   part_pseudo_rules_.shrink_to_fit();
@@ -1453,6 +1626,9 @@ void RuleSet::AssertRuleListsSorted() const {
   for (const auto& item : tag_rules_) {
     DCHECK(IsRuleListSorted(item.value));
   }
+  for (const auto& item : input_rules_) {
+    DCHECK(IsRuleListSorted(item.value));
+  }
   for (const auto& item : ua_shadow_pseudo_element_rules_) {
     DCHECK(IsRuleListSorted(item.value));
   }
@@ -1461,6 +1637,7 @@ void RuleSet::AssertRuleListsSorted() const {
   DCHECK(IsRuleListSorted(focus_pseudo_class_rules_));
   DCHECK(IsRuleListSorted(selector_fragment_anchor_rules_));
   DCHECK(IsRuleListSorted(focus_visible_pseudo_class_rules_));
+  DCHECK(IsRuleListSorted(scrollbar_rules_));
   DCHECK(IsRuleListSorted(universal_rules_));
   DCHECK(IsRuleListSorted(shadow_host_rules_));
   DCHECK(IsRuleListSorted(part_pseudo_rules_));
@@ -1500,12 +1677,14 @@ void RuleSet::Trace(Visitor* visitor) const {
   visitor->Trace(class_rules_);
   visitor->Trace(attr_rules_);
   visitor->Trace(tag_rules_);
+  visitor->Trace(input_rules_);
   visitor->Trace(ua_shadow_pseudo_element_rules_);
   visitor->Trace(link_pseudo_class_rules_);
   visitor->Trace(cue_pseudo_rules_);
   visitor->Trace(focus_pseudo_class_rules_);
   visitor->Trace(selector_fragment_anchor_rules_);
   visitor->Trace(focus_visible_pseudo_class_rules_);
+  visitor->Trace(scrollbar_rules_);
   visitor->Trace(universal_rules_);
   visitor->Trace(shadow_host_rules_);
   visitor->Trace(part_pseudo_rules_);

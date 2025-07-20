@@ -4,6 +4,11 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.BASE_ANIMATION_DURATION_MS;
+import static org.chromium.chrome.browser.tasks.tab_management.TabUiThemeProvider.getTabCardHighlightBackgroundTintList;
+import static org.chromium.ui.animation.CommonAnimationsFactory.createFadeInAnimation;
+import static org.chromium.ui.animation.CommonAnimationsFactory.createFadeOutAnimation;
+
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
@@ -21,45 +26,31 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.ImageView;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.core.content.res.ResourcesCompat;
 import androidx.core.widget.ImageViewCompat;
 import androidx.vectordrawable.graphics.drawable.AnimatedVectorDrawableCompat;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.quick_delete.QuickDeleteAnimationGradientDrawable;
+import org.chromium.chrome.browser.tasks.tab_management.TabListModel.AnimationStatus;
 import org.chromium.chrome.browser.tasks.tab_management.TabProperties.TabActionState;
 import org.chromium.chrome.tab_ui.R;
 import org.chromium.components.browser_ui.widget.selectable_list.SelectableItemViewBase;
+import org.chromium.ui.UiUtils;
+import org.chromium.ui.animation.AnimationHandler;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.ref.WeakReference;
 
-// TODO(crbug.com/339038505): De-dupe logic in TabListView.
 /** Holds the view for a selectable tab grid. */
-public class TabGridView extends SelectableItemViewBase<Integer> {
+@NullMarked
+public class TabGridView extends SelectableItemViewBase<TabListEditorItemSelectionId> {
     private static final long RESTORE_ANIMATION_DURATION_MS = 50;
-    private static final long BASE_ANIMATION_DURATION_MS = 218;
     private static final float ZOOM_IN_SCALE = 0.8f;
 
-    private static WeakReference<Bitmap> sCloseButtonBitmapWeakRef;
-
-    @IntDef({
-        AnimationStatus.SELECTED_CARD_ZOOM_IN,
-        AnimationStatus.SELECTED_CARD_ZOOM_OUT,
-        AnimationStatus.HOVERED_CARD_ZOOM_IN,
-        AnimationStatus.HOVERED_CARD_ZOOM_OUT,
-        AnimationStatus.CARD_RESTORE
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface AnimationStatus {
-        int CARD_RESTORE = 0;
-        int SELECTED_CARD_ZOOM_OUT = 1;
-        int SELECTED_CARD_ZOOM_IN = 2;
-        int HOVERED_CARD_ZOOM_OUT = 3;
-        int HOVERED_CARD_ZOOM_IN = 4;
-        int NUM_ENTRIES = 5;
-    }
+    private static @Nullable WeakReference<Bitmap> sCloseButtonBitmapWeakRef;
 
     @IntDef({
         QuickDeleteAnimationStatus.TAB_HIDE,
@@ -74,13 +65,14 @@ public class TabGridView extends SelectableItemViewBase<Integer> {
         int NUM_ENTRIES = 3;
     }
 
+    private final AnimationHandler mHighlightAnimationHandler = new AnimationHandler();
     private boolean mIsAnimating;
     private boolean mShowOverflowButton;
     private @TabActionState int mTabActionState = TabActionState.UNSET;
     private @Nullable ObjectAnimator mQuickDeleteAnimation;
     private @Nullable QuickDeleteAnimationGradientDrawable mQuickDeleteAnimationDrawable;
     private ImageView mActionButton;
-    private ColorStateList mActionButtonTint;
+    private @Nullable ColorStateList mActionButtonTint;
 
     public TabGridView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -212,6 +204,24 @@ public class TabGridView extends SelectableItemViewBase<Integer> {
         mActionButton.setImportantForAccessibility(accessibilityMode);
     }
 
+    void setIsHighlighted(boolean isHighlighted, boolean isIncognito) {
+        Drawable gridCardHighlightDrawable = null;
+        View cardWrapper = findViewById(R.id.card_wrapper);
+        if (isHighlighted) {
+            Context context = getContext();
+            gridCardHighlightDrawable =
+                    UiUtils.getTintedDrawable(
+                            context,
+                            R.drawable.tab_grid_card_highlight,
+                            getTabCardHighlightBackgroundTintList(context, isIncognito));
+        }
+        mHighlightAnimationHandler.startAnimation(
+                isHighlighted
+                        ? createFadeInAnimation(cardWrapper)
+                        : createFadeOutAnimation(cardWrapper));
+        cardWrapper.setBackground(gridCardHighlightDrawable);
+    }
+
     private void setTabActionButtonCloseDrawable() {
         assert mTabActionState != TabActionState.UNSET;
 
@@ -225,7 +235,7 @@ public class TabGridView extends SelectableItemViewBase<Integer> {
                                     bitmap, closeButtonSize, closeButtonSize, true));
             bitmap.recycle();
         }
-        mActionButton.setBackground(null);
+        mActionButton.setBackgroundResource(R.drawable.small_icon_background);
         mActionButton.setImageBitmap(sCloseButtonBitmapWeakRef.get());
     }
 
@@ -264,10 +274,6 @@ public class TabGridView extends SelectableItemViewBase<Integer> {
     }
 
     // SelectableItemViewBase implementation.
-
-    @Override
-    protected void updateView(boolean animate) {}
-
     @Override
     protected void handleNonSelectionClick() {}
 

@@ -62,12 +62,17 @@ WindowController::WindowController(ui::BaseWindow* window, Profile* profile)
     : window_(window), profile_(profile) {
 }
 
-WindowController::~WindowController() {
+WindowController::~WindowController() = default;
+
+BrowserWindowInterface* WindowController::GetBrowserWindowInterface() {
+  return nullptr;
 }
 
+#if !BUILDFLAG(IS_ANDROID)
 Browser* WindowController::GetBrowser() const {
   return nullptr;
 }
+#endif
 
 bool WindowController::MatchesFilter(TypeFilter filter) const {
   TypeFilter type = 1 << base::to_underlying(

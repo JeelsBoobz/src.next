@@ -16,7 +16,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "crypto/ec_private_key.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/completion_repeating_callback.h"
 #include "net/base/net_errors.h"
@@ -236,7 +235,7 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // Offset of the first unused byte in |read_buf_|.  May be nonzero due to
   // body data in the same packet as header data but is zero when reading
   // headers.
-  int read_buf_unused_offset_ = 0;
+  size_t read_buf_unused_offset_ = 0;
 
   // The amount beyond |read_buf_unused_offset_| where the status line starts;
   // std::string::npos if not found yet.
@@ -296,7 +295,7 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
 
   // Where the caller wants the body data.
   scoped_refptr<IOBuffer> user_read_buf_;
-  int user_read_buf_len_ = 0;
+  size_t user_read_buf_len_ = 0;
 
   // The callback to notify a user that the handshake has been confirmed.
   CompletionOnceCallback confirm_handshake_callback_;

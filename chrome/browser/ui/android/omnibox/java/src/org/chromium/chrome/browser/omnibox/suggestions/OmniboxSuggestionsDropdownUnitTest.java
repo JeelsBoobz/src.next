@@ -45,17 +45,14 @@ import org.robolectric.shadows.ShadowLooper;
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.omnibox.styles.OmniboxResourceProvider;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsDropdownEmbedder.OmniboxAlignment;
 import org.chromium.chrome.browser.omnibox.test.R;
-import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowDelegate;
 
 /** Unit tests for {@link OmniboxSuggestionsDropdown}. */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(sdk = 28)
+@Config(sdk = 29)
 public class OmniboxSuggestionsDropdownUnitTest {
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule();
     private @Mock Runnable mDropdownScrollListener;
@@ -68,11 +65,11 @@ public class OmniboxSuggestionsDropdownUnitTest {
     private TestOmniboxSuggestionsDropdown mDropdown;
     private OmniboxSuggestionsDropdown.SuggestionLayoutScrollListener mListener;
     private OmniboxAlignment mOmniboxAlignment;
-    private ObservableSupplierImpl<OmniboxAlignment> mOmniboxAlignmentSupplier =
+    private final ObservableSupplierImpl<OmniboxAlignment> mOmniboxAlignmentSupplier =
             new ObservableSupplierImpl<>();
     private boolean mIsTablet;
     private boolean mAttachedToWindow;
-    private OmniboxSuggestionsDropdownEmbedder mEmbedder =
+    private final OmniboxSuggestionsDropdownEmbedder mEmbedder =
             new OmniboxSuggestionsDropdownEmbedder() {
                 @Override
                 public boolean isTablet() {
@@ -155,18 +152,6 @@ public class OmniboxSuggestionsDropdownUnitTest {
         config.screenWidthDp = windowWidthDp;
 
         return mContext.createConfigurationContext(config);
-    }
-
-    @Test
-    @Feature("Omnibox")
-    public void testBackgroundColor() {
-        assertEquals(
-                OmniboxResourceProvider.getSuggestionsDropdownStandardBackgroundColor(mContext),
-                ChromeColors.getSurfaceColor(
-                        mContext, R.dimen.omnibox_suggestion_dropdown_bg_elevation));
-        assertEquals(
-                OmniboxResourceProvider.getSuggestionsDropdownIncognitoBackgroundColor(mContext),
-                mContext.getColor(R.color.omnibox_dropdown_bg_incognito));
     }
 
     @Test

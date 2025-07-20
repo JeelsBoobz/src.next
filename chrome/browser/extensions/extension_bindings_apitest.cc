@@ -65,12 +65,12 @@ void MouseUpInWebContents(content::WebContents* web_contents) {
 
 class ExtensionBindingsApiTest : public ExtensionApiTest {
  public:
-  ExtensionBindingsApiTest() {}
+  ExtensionBindingsApiTest() = default;
 
   ExtensionBindingsApiTest(const ExtensionBindingsApiTest&) = delete;
   ExtensionBindingsApiTest& operator=(const ExtensionBindingsApiTest&) = delete;
 
-  ~ExtensionBindingsApiTest() override {}
+  ~ExtensionBindingsApiTest() override = default;
 
   void SetUpOnMainThread() override {
     ExtensionApiTest::SetUpOnMainThread();
@@ -538,7 +538,7 @@ IN_PROC_BROWSER_TEST_F(
   EXPECT_FALSE(event_router->ExtensionHasEventListener(extension->id(),
                                                        "tabs.onCreated"));
 
-  // Register both lsiteners, and verify they were added.
+  // Register both listeners, and verify they were added.
   ASSERT_TRUE(content::ExecJs(first_tab, "registerListener()"));
   ASSERT_TRUE(content::ExecJs(second_tab, "registerListener()"));
   EXPECT_TRUE(event_router->ExtensionHasEventListener(extension->id(),
@@ -614,10 +614,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionBindingsApiTest,
     // Passing a message without an active user gesture shouldn't result in a
     // gesture being active on the receiving end.
     ExtensionTestMessageListener listener;
-    content::EvalJsResult result =
+    EXPECT_EQ(
         content::EvalJs(tab, "document.getElementById('go-button').click()",
-                        content::EXECUTE_SCRIPT_NO_USER_GESTURE);
-    EXPECT_TRUE(result.value.is_none());
+                        content::EXECUTE_SCRIPT_NO_USER_GESTURE),
+        base::Value());
 
     EXPECT_TRUE(listener.WaitUntilSatisfied());
     EXPECT_EQ("Clicked: false", listener.message());
@@ -627,9 +627,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionBindingsApiTest,
     // If there is an active user gesture when the message is sent, we should
     // synthesize a user gesture on the receiving end.
     ExtensionTestMessageListener listener;
-    content::EvalJsResult result =
-        content::EvalJs(tab, "document.getElementById('go-button').click()");
-    EXPECT_TRUE(result.value.is_none());
+    EXPECT_EQ(
+        content::EvalJs(tab, "document.getElementById('go-button').click()"),
+        base::Value());
 
     EXPECT_TRUE(listener.WaitUntilSatisfied());
     EXPECT_EQ("Clicked: true", listener.message());

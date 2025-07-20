@@ -7,11 +7,11 @@
 #include <utility>
 
 #include "base/feature_list.h"
+#include "base/i18n/number_formatting.h"
 #include "base/i18n/rtl.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/download/bubble/download_bubble_prefs.h"
@@ -33,6 +33,7 @@
 #include "components/safe_browsing/buildflags.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/core/common/safebrowsing_referral_methods.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/vector_icons/vector_icons.h"
 #include "net/base/mime_util.h"
 #include "third_party/blink/public/common/mime_util/mime_util.h"
@@ -152,9 +153,6 @@ std::u16string FailStateDescription(FailState fail_state) {
 }
 
 }  // namespace
-
-DownloadUIModel::DownloadUIModel()
-    : DownloadUIModel::DownloadUIModel(std::make_unique<StatusTextBuilder>()) {}
 
 DownloadUIModel::DownloadUIModel(
     std::unique_ptr<StatusTextBuilderBase> status_text_builder)
@@ -417,6 +415,10 @@ int64_t DownloadUIModel::GetTotalBytes() const {
   return 0;
 }
 
+int64_t DownloadUIModel::GetUploadedBytes() const {
+  return 0;
+}
+
 int DownloadUIModel::PercentComplete() const {
   return -1;
 }
@@ -437,19 +439,9 @@ bool DownloadUIModel::IsInsecure() const {
   return false;
 }
 
-bool DownloadUIModel::ShouldRemoveFromShelfWhenComplete() const {
-  return false;
-}
-
 bool DownloadUIModel::ShouldShowDownloadStartedAnimation() const {
   return true;
 }
-
-bool DownloadUIModel::ShouldShowInShelf() const {
-  return true;
-}
-
-void DownloadUIModel::SetShouldShowInShelf(bool should_show) {}
 
 bool DownloadUIModel::ShouldNotifyUI() const {
   return true;
@@ -501,7 +493,7 @@ DownloadUIModel::GetInsecureDownloadStatus() const {
 
 void DownloadUIModel::OpenUsingPlatformHandler() {}
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 std::optional<DownloadCommands::Command>
 DownloadUIModel::MaybeGetMediaAppAction() const {
   return std::nullopt;
@@ -655,10 +647,15 @@ bool DownloadUIModel::IsCommandEnabled(
     case DownloadCommands::DEEP_SCAN:
     case DownloadCommands::BYPASS_DEEP_SCANNING:
     case DownloadCommands::BYPASS_DEEP_SCANNING_AND_OPEN:
-    case DownloadCommands::REVIEW:
     case DownloadCommands::RETRY:
     case DownloadCommands::CANCEL_DEEP_SCAN:
       return true;
+    case DownloadCommands::REVIEW:
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
+      return true;
+#else
+      return false;
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
     case DownloadCommands::OPEN_SAFE_BROWSING_SETTING:
       return CanUserTurnOnSafeBrowsing(profile());
   }
@@ -769,7 +766,7 @@ void DownloadUIModel::ExecuteCommand(DownloadCommands* download_commands,
       break;
     case DownloadCommands::OPEN_WITH_MEDIA_APP:
     case DownloadCommands::EDIT_WITH_MEDIA_APP:
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       OpenUsingMediaApp();
       break;
 #else
@@ -787,15 +784,20 @@ DownloadUIModel::DangerUiPattern DownloadUIModel::GetDangerUiPattern() const {
   return DangerUiPattern::kNormal;
 }
 
-bool DownloadUIModel::ShouldShowInBubble() const {
-  return ShouldShowInShelf();
+bool DownloadUIModel::ShouldShowInUi() const {
+  return true;
 }
+
+void DownloadUIModel::SetShouldShowInUi(bool should_show) {}
+
+bool DownloadUIModel::ShouldShowInBubble() const {
+  return ShouldShowInUi();
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 bool DownloadUIModel::IsEphemeralWarning() const {
   return false;
 }
-
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 std::string DownloadUIModel::GetMimeType() const {
   return "text/html";
@@ -976,7 +978,7 @@ DownloadUIModel::BubbleStatusTextBuilder::GetBubbleWarningStatusText() const {
     case download::DOWNLOAD_DANGER_TYPE_SENSITIVE_CONTENT_BLOCK:
       // "Blocked by your organization"
       return l10n_util::GetStringUTF16(
-          IDS_DOWNLOAD_BUBBLE_INTERRUPTED_STATUS_BLOCKED_ORGANIZATION);
+          IDS_POLICY_ACTION_BLOCKED_BY_ORGANIZATION);
     case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_SCANNING:
         // "Scan for malware • Suspicious"
         return l10n_util::GetStringFUTF16(
@@ -1255,7 +1257,7 @@ DownloadUIModel::BubbleStatusTextBuilder::GetInterruptedStatusText(
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS_VIRUS;
       break;
     case FailState::FILE_BLOCKED:
-      string_id = IDS_DOWNLOAD_BUBBLE_INTERRUPTED_STATUS_BLOCKED_ORGANIZATION;
+      string_id = IDS_POLICY_ACTION_BLOCKED_BY_ORGANIZATION;
       break;
     case FailState::FILE_SECURITY_CHECK_FAILED:
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS_SECURITY_CHECK_FAILED;
@@ -1308,7 +1310,7 @@ DownloadUIModel::BubbleStatusTextBuilder::GetInterruptedStatusText(
   return l10n_util::GetStringUTF16(string_id);
 }
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 void DownloadUIModel::CompleteSafeBrowsingScan() {}
 void DownloadUIModel::ReviewScanningVerdict(
     content::WebContents* web_contents) {}

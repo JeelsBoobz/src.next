@@ -73,7 +73,7 @@
 #include "ui/shell_dialogs/selected_file_info.h"
 #include "url/origin.h"
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 #include "chrome/browser/policy/dm_token_utils.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
@@ -91,15 +91,11 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
 #include "chrome/browser/download/download_prompt_status.h"
-#include "components/infobars/content/content_infobar_manager.h"
-#include "components/infobars/core/infobar.h"
-#include "components/infobars/core/infobar_delegate.h"
-#include "components/infobars/core/infobar_manager.h"
 #endif
 
-#if BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
-#endif  // BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 
 using download::DownloadItem;
 using download::DownloadPathReservationTracker;
@@ -126,7 +122,7 @@ namespace {
 
 class MockWebContentsDelegate : public content::WebContentsDelegate {
  public:
-  ~MockWebContentsDelegate() override {}
+  ~MockWebContentsDelegate() override = default;
   MOCK_METHOD(void,
               CanDownload,
               (const GURL&,
@@ -148,7 +144,7 @@ class TestChromeDownloadManagerDelegate : public ChromeDownloadManagerDelegate {
       : ChromeDownloadManagerDelegate(profile) {
     ON_CALL(*this, MockCheckDownloadUrl(_, _))
         .WillByDefault(Return(download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS));
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
     ON_CALL(*this, GetDownloadProtectionService())
         .WillByDefault(Return(nullptr));
 #endif
@@ -157,7 +153,7 @@ class TestChromeDownloadManagerDelegate : public ChromeDownloadManagerDelegate {
                              ReturnArg<1>()));
   }
 
-  ~TestChromeDownloadManagerDelegate() override {}
+  ~TestChromeDownloadManagerDelegate() override = default;
 
   // The concrete implementation talks to the ExtensionDownloadsEventRouter to
   // dispatch a OnDeterminingFilename event. While we would like to test this as
@@ -214,7 +210,7 @@ class TestChromeDownloadManagerDelegate : public ChromeDownloadManagerDelegate {
                download::DownloadDangerType(DownloadItem*,
                                             const base::FilePath&));
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
   MOCK_METHOD0(GetDownloadProtectionService,
                safe_browsing::DownloadProtectionService*());
 #endif
@@ -846,16 +842,23 @@ TEST_F(ChromeDownloadManagerDelegateTest, InterceptDownloadByOfflinePages) {
   const GURL kUrl("http://example.com/foo");
   std::string mime_type = "text/html";
   bool should_intercept = delegate()->InterceptDownloadIfApplicable(
-      kUrl, "", "", mime_type, "", 10, false /*is_transient*/, nullptr);
+      kUrl, "", "", mime_type, "", 10, false /*is_transient*/,
+      false /*is_content_initiated*/, nullptr);
   EXPECT_TRUE(should_intercept);
 
   should_intercept = delegate()->InterceptDownloadIfApplicable(
-      kUrl, "", "", mime_type, "", 10, true /*is_transient*/, nullptr);
+      kUrl, "", "", mime_type, "", 10, false /*is_transient*/,
+      true /*is_content_initiated*/, nullptr);
+  EXPECT_FALSE(should_intercept);
+
+  should_intercept = delegate()->InterceptDownloadIfApplicable(
+      kUrl, "", "", mime_type, "", 10, true /*is_transient*/,
+      false /*is_content_initiated*/, nullptr);
   EXPECT_FALSE(should_intercept);
 
   should_intercept = delegate()->InterceptDownloadIfApplicable(
       kUrl, "", "attachment" /*content_disposition*/, mime_type, "", 10,
-      false /*is_transient*/, nullptr);
+      false /*is_transient*/, false /*is_content_initiated*/, nullptr);
   EXPECT_FALSE(should_intercept);
 }
 
@@ -895,15 +898,17 @@ TEST_F(ChromeDownloadManagerDelegateTest, InterceptDownloadForAutomotive) {
   const GURL kUrl("http://example.com/foo");
   std::string mime_type = "image/png";
   bool should_intercept = delegate()->InterceptDownloadIfApplicable(
-      kUrl, "", "", mime_type, "", 10, false /*is_transient*/, nullptr);
+      kUrl, "", "", mime_type, "", 10, false /*is_transient*/,
+      false /*is_content_initiated*/, nullptr);
   EXPECT_FALSE(should_intercept);
 
   mime_type = "application/pdf";
   should_intercept = delegate()->InterceptDownloadIfApplicable(
-      kUrl, "", "", mime_type, "", 10, false /*is_transient*/, nullptr);
+      kUrl, "", "", mime_type, "", 10, false /*is_transient*/,
+      false /*is_content_initiated*/, nullptr);
   EXPECT_TRUE(should_intercept);
   histograms.ExpectUniqueSample("Download.Blocked.ContentType.Automotive",
-                                download::DownloadContent::PDF, 1);
+                                download::DownloadContent::kPdf, 1);
 
   EXPECT_EQ(1, message_bridge->GetMessageShownCount());
 }
@@ -1850,9 +1855,15 @@ TEST_F(ChromeDownloadManagerDelegateTest,
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
-#if !BUILDFLAG(IS_ANDROID)
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 TEST_F(ChromeDownloadManagerDelegateTest, ScheduleCancelForEphemeralWarning) {
+#if BUILDFLAG(IS_ANDROID)
+  // Enable the feature on Android to activate warnings, and thus ephemeral
+  // warning cancellation.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(safe_browsing::kMaliciousApkDownloadCheck);
+#endif
+
   std::unique_ptr<download::MockDownloadItem> download_item =
       CreateActiveDownloadItem(0);
   EXPECT_CALL(*download_item, GetDangerType())
@@ -1869,6 +1880,13 @@ TEST_F(ChromeDownloadManagerDelegateTest, ScheduleCancelForEphemeralWarning) {
 
 TEST_F(ChromeDownloadManagerDelegateTest,
        ScheduleCancelForEphemeralWarning_DownloadKept) {
+#if BUILDFLAG(IS_ANDROID)
+  // Enable the feature on Android to activate warnings, and thus ephemeral
+  // warning cancellation.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(safe_browsing::kMaliciousApkDownloadCheck);
+#endif
+
   std::unique_ptr<download::MockDownloadItem> download_item =
       CreateActiveDownloadItem(0);
   EXPECT_CALL(*download_item, GetDangerType())
@@ -1880,9 +1898,16 @@ TEST_F(ChromeDownloadManagerDelegateTest,
   EXPECT_CALL(*download_item, Cancel(false)).Times(0);
   task_environment()->FastForwardBy(base::Hours(1));
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 TEST_F(ChromeDownloadManagerDelegateTest, CancelAllEphemeralWarnings) {
+#if BUILDFLAG(IS_ANDROID)
+  // Enable the feature on Android to activate warnings, and thus ephemeral
+  // warning cancellation.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(safe_browsing::kMaliciousApkDownloadCheck);
+#endif
+
   std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> items;
   auto safe_item = CreateActiveDownloadItem(0);
   EXPECT_CALL(*safe_item, GetDangerType())
@@ -1901,7 +1926,7 @@ TEST_F(ChromeDownloadManagerDelegateTest, CancelAllEphemeralWarnings) {
   EXPECT_CALL(*download_manager(), GetAllDownloads(_))
       .WillRepeatedly(SetArgPointee<0>(items));
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // No cancels should go through for Ash.
   EXPECT_CALL(*safe_item, Cancel(false)).Times(0);
   EXPECT_CALL(*dangerous_item, Cancel(false)).Times(0);
@@ -1914,9 +1939,8 @@ TEST_F(ChromeDownloadManagerDelegateTest, CancelAllEphemeralWarnings) {
 
   delegate()->CancelAllEphemeralWarnings();
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 namespace {
 
 using ReportType = safe_browsing::ClientSafeBrowsingReportRequest::ReportType;
@@ -2328,7 +2352,8 @@ TEST_P(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
 }
 
 // Auto cancel is only available on platforms with download bubble.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+// TODO(crbug.com/397407934): Support auto cancel reports on Android.
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
 TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
        AutoCanceledReport_Sent) {
   safe_browsing::SetSafeBrowsingState(
@@ -2369,7 +2394,7 @@ TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
   EXPECT_FALSE(
       safe_browsing_service()->GetActualSentDidProceedValue().has_value());
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
 
 TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
        CanceledReportAtShutdown_Persisted) {
@@ -2434,6 +2459,7 @@ TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
                                                  base::OnceClosure()));
 }
 
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
        TrustedSourcesDontExemptEnterpriseScans) {
   base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());
@@ -2475,8 +2501,10 @@ TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
   run_loop.Run();
   policy::SetDMTokenForTesting(policy::DMToken::CreateEmptyToken());
 }
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 #endif  // !BUILDFLAG(IS_WIN)
 
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
        ShouldObfuscateDownload) {
   base::test::ScopedFeatureList scoped_feature_list;
@@ -2543,7 +2571,8 @@ TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
 
   EXPECT_FALSE(delegate()->ShouldObfuscateDownload(download_item.get()));
 }
-#endif  // FULL_SAFE_BROWSING
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
+#endif  // SAFE_BROWSING_DOWNLOAD_PROTECTION
 
 #if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 TEST_F(ChromeDownloadManagerDelegateTest, DeobfuscationBeforeCompletion) {
@@ -2610,38 +2639,6 @@ TEST_F(ChromeDownloadManagerDelegateTest, DeobfuscationBeforeCompletion) {
 #if BUILDFLAG(IS_ANDROID)
 
 namespace {
-
-class AndroidDownloadInfobarCounter
-    : public infobars::InfoBarManager::Observer {
- public:
-  explicit AndroidDownloadInfobarCounter(content::WebContents* web_contents)
-      : infobar_manager_(
-            infobars::ContentInfoBarManager::FromWebContents(web_contents)) {
-    infobar_manager_->AddObserver(this);
-  }
-
-  ~AndroidDownloadInfobarCounter() override {
-    infobar_manager_->RemoveObserver(this);
-  }
-
-  int CheckAndResetInfobarCount() {
-    int count = infobar_count_;
-    infobar_count_ = 0;
-    return count;
-  }
-
- private:
-  void OnInfoBarAdded(infobars::InfoBar* infobar) override {
-    if (infobar->delegate()->GetIdentifier() ==
-        infobars::InfoBarDelegate::DUPLICATE_DOWNLOAD_INFOBAR_DELEGATE_ANDROID)
-      ++infobar_count_;
-    infobar->delegate()->InfoBarDismissed();
-    infobar->RemoveSelf();
-  }
-
-  raw_ptr<infobars::ContentInfoBarManager> infobar_manager_ = nullptr;
-  int infobar_count_ = 0;
-};
 
 class TestDownloadDialogBridge : public DownloadDialogBridge {
  public:

@@ -9,11 +9,11 @@
 
 #include "components/history/core/browser/history_types.h"
 
+#include <algorithm>
 #include <limits>
 
 #include "base/check.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/history/core/browser/page_usage_data.h"
@@ -48,26 +48,6 @@ VisitRow::VisitRow(URLID arg_url_id,
 VisitRow::~VisitRow() = default;
 
 VisitRow::VisitRow(const VisitRow&) = default;
-
-// VisitedLinkRow --------------------------------------------------------------
-
-bool operator==(const VisitedLinkRow& lhs, const VisitedLinkRow& rhs) {
-  return std::tie(lhs.id, lhs.link_url_id, lhs.top_level_url, lhs.frame_url,
-                  lhs.visit_count) == std::tie(rhs.id, rhs.link_url_id,
-                                               rhs.top_level_url, rhs.frame_url,
-                                               rhs.visit_count);
-}
-
-bool operator!=(const VisitedLinkRow& lhs, const VisitedLinkRow& rhs) {
-  return !(lhs == rhs);
-}
-
-bool operator<(const VisitedLinkRow& lhs, const VisitedLinkRow& rhs) {
-  return std::tie(lhs.id, lhs.link_url_id, lhs.top_level_url, lhs.frame_url,
-                  lhs.visit_count) < std::tie(rhs.id, rhs.link_url_id,
-                                              rhs.top_level_url, rhs.frame_url,
-                                              rhs.visit_count);
-}
 
 // QueryResults ----------------------------------------------------------------
 
@@ -332,6 +312,7 @@ HistoryAddPageArgs::HistoryAddPageArgs()
                          std::nullopt,
                          std::nullopt,
                          std::nullopt,
+                         std::nullopt,
                          std::nullopt) {}
 
 HistoryAddPageArgs::HistoryAddPageArgs(
@@ -350,6 +331,7 @@ HistoryAddPageArgs::HistoryAddPageArgs(
     bool is_ephemeral,
     std::optional<std::u16string> title,
     std::optional<GURL> top_level_url,
+    std::optional<GURL> frame_url,
     std::optional<Opener> opener,
     std::optional<int64_t> bookmark_id,
     std::optional<std::string> app_id,
@@ -369,6 +351,7 @@ HistoryAddPageArgs::HistoryAddPageArgs(
       is_ephemeral(is_ephemeral),
       title(title),
       top_level_url(top_level_url),
+      frame_url(frame_url),
       opener(opener),
       bookmark_id(bookmark_id),
       app_id(app_id),
@@ -500,39 +483,6 @@ VisitContextAnnotations::VisitContextAnnotations(
 
 VisitContextAnnotations::~VisitContextAnnotations() = default;
 
-bool VisitContextAnnotations::operator==(
-    const VisitContextAnnotations& other) const {
-  return on_visit == other.on_visit &&
-         omnibox_url_copied == other.omnibox_url_copied &&
-         is_existing_part_of_tab_group == other.is_existing_part_of_tab_group &&
-         is_placed_in_tab_group == other.is_placed_in_tab_group &&
-         is_existing_bookmark == other.is_existing_bookmark &&
-         is_new_bookmark == other.is_new_bookmark &&
-         is_ntp_custom_link == other.is_ntp_custom_link &&
-         duration_since_last_visit == other.duration_since_last_visit &&
-         page_end_reason == other.page_end_reason &&
-         total_foreground_duration == other.total_foreground_duration;
-}
-
-bool VisitContextAnnotations::operator!=(
-    const VisitContextAnnotations& other) const {
-  return !(*this == other);
-}
-
-bool VisitContextAnnotations::OnVisitFields::operator==(
-    const VisitContextAnnotations::OnVisitFields& other) const {
-  return browser_type == other.browser_type && window_id == other.window_id &&
-         tab_id == other.tab_id && task_id == other.task_id &&
-         root_task_id == other.root_task_id &&
-         parent_task_id == other.parent_task_id &&
-         response_code == other.response_code;
-}
-
-bool VisitContextAnnotations::OnVisitFields::operator!=(
-    const VisitContextAnnotations::OnVisitFields& other) const {
-  return !(*this == other);
-}
-
 AnnotatedVisit::AnnotatedVisit() = default;
 AnnotatedVisit::AnnotatedVisit(URLRow url_row,
                                VisitRow visit_row,
@@ -644,7 +594,7 @@ Cluster& Cluster::operator=(Cluster&&) = default;
 Cluster::~Cluster() = default;
 
 const ClusterVisit& Cluster::GetMostRecentVisit() const {
-  return *base::ranges::max_element(
+  return *std::ranges::max_element(
       visits, [](auto time1, auto time2) { return time1 < time2; },
       [](const auto& cluster_visit) {
         return cluster_visit.annotated_visit.visit_row.visit_time;

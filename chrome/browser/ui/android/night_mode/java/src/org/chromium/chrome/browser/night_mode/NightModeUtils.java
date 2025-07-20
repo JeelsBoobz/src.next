@@ -9,20 +9,21 @@ import static org.chromium.chrome.browser.preferences.ChromePreferenceKeys.UI_TH
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.Configuration;
-import android.os.Build;
 import android.view.ContextThemeWrapper;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.StyleRes;
 
 import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 
 import java.util.LinkedHashSet;
 
 /** Helper methods for supporting night mode. */
+@NullMarked
 public class NightModeUtils {
-    private static Boolean sNightModeSupportedForTest;
+    private static @Nullable Boolean sNightModeSupportedForTest;
 
     /**
      * @return Whether night mode is supported.
@@ -56,16 +57,7 @@ public class NightModeUtils {
 
         // Rebase the theme against the new configuration, so the attributes get resolved to the
         // correct colors based on the night mode setting. See https://crbug.com/1280540.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            activity.getTheme().rebase();
-        } else {
-            // Theme#rebase() is only available on APIs 29+ and the support library of the method
-            // isn't guaranteed to succeed on older versions. So, we manually re-apply all the
-            // cached styles.
-            for (Integer themeResId : themeResIds) {
-                activity.getTheme().applyStyle(themeResId, true);
-            }
-        }
+        activity.getTheme().rebase();
     }
 
     /**
@@ -120,21 +112,33 @@ public class NightModeUtils {
     public static @ThemeType int getThemeSetting() {
         int userSetting = ChromeSharedPreferences.getInstance().readInt(UI_THEME_SETTING, -1);
         if (userSetting == -1) {
-            return isNightModeDefaultToLight() ? ThemeType.LIGHT : ThemeType.SYSTEM_DEFAULT;
+            return ThemeType.SYSTEM_DEFAULT;
         } else {
             return userSetting;
         }
     }
 
+    /**
+     * Returns the title to display for the given theme.
+     *
+     * @param context The context in which the title will be displayed.
+     * @param theme The theme for which to return the title.
+     * @return the title to display.
+     */
+    public static String getThemeSettingTitle(Context context, @ThemeType int theme) {
+        switch (theme) {
+            case ThemeType.DARK:
+                return context.getString(R.string.dark_mode);
+            case ThemeType.LIGHT:
+                return context.getString(R.string.light_mode);
+            case ThemeType.SYSTEM_DEFAULT:
+                return context.getString(R.string.themes_system_default_title);
+        }
+        throw new IllegalArgumentException("Unknown `theme`: " + theme);
+    }
+
     public static void setNightModeSupportedForTesting(@Nullable Boolean nightModeSupported) {
         sNightModeSupportedForTest = nightModeSupported;
         ResettersForTesting.register(() -> sNightModeSupportedForTest = null);
-    }
-
-    /**
-     * @return Whether or not to default to the light theme.
-     */
-    public static boolean isNightModeDefaultToLight() {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q;
     }
 }

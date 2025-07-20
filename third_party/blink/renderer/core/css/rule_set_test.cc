@@ -41,7 +41,6 @@
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
@@ -187,10 +186,10 @@ TEST(RuleSetTest, findBestRuleSetAndAdd_Host) {
   test::TaskEnvironment task_environment;
   css_test_helpers::TestStyleSheet sheet;
 
-  sheet.AddCSSRules(":host { }");
+  sheet.AddCSSRules(":host { } :not(:not(:host)):host { }");
   RuleSet& rule_set = sheet.GetRuleSet();
   const base::span<const RuleData> rules = rule_set.ShadowHostRules();
-  ASSERT_EQ(1u, rules.size());
+  ASSERT_EQ(2u, rules.size());
 }
 
 TEST(RuleSetTest, findBestRuleSetAndAdd_HostWithId) {
@@ -265,8 +264,8 @@ TEST(RuleSetTest, findBestRuleSetAndAdd_Focus) {
   sheet.AddCSSRules(":focus { }");
   sheet.AddCSSRules("[attr]:focus { }");
   RuleSet& rule_set = sheet.GetRuleSet();
-  ASSERT_EQ(1u, rule_set.FocusPseudoClassRules().size());
-  ASSERT_EQ(1u, rule_set.AttrRules(AtomicString("attr")).size());
+  ASSERT_EQ(2u, rule_set.FocusPseudoClassRules().size());
+  ASSERT_EQ(0u, rule_set.AttrRules(AtomicString("attr")).size());
 }
 
 TEST(RuleSetTest, findBestRuleSetAndAdd_LinkVisited) {
@@ -313,14 +312,13 @@ TEST(RuleSetTest, findBestRuleSetAndAdd_PartPseudoElements) {
   test::TaskEnvironment task_environment;
   css_test_helpers::TestStyleSheet sheet;
 
-  sheet.AddCSSRules("::part(dummy):focus, #id::part(dummy) { }");
+  sheet.AddCSSRules("::part(dummy):disabled, #id::part(dummy) { }");
   RuleSet& rule_set = sheet.GetRuleSet();
   const base::span<const RuleData> rules = rule_set.PartPseudoRules();
   ASSERT_EQ(2u, rules.size());
 }
 
 TEST(RuleSetTest, findBestRuleSetAndAdd_ShadowPseudoAfterPart) {
-  ScopedCSSCascadeCorrectScopeForTest scoped_feature(true);
   test::TaskEnvironment task_environment;
   css_test_helpers::TestStyleSheet sheet;
 
@@ -792,6 +790,134 @@ TEST(RuleSetTest, SingleScope) {
     )CSS");
     EXPECT_FALSE(sheet.GetRuleSet().SingleScope());
   }
+}
+
+TEST(RuleSetTest, ParentPseudoBucketing_Single) {
+  test::TaskEnvironment task_environment;
+  css_test_helpers::TestStyleSheet sheet;
+  sheet.AddCSSRules(R"CSS(
+    .a {
+      & {
+        color: green;
+      }
+    }
+  )CSS");
+  RuleSet& rule_set = sheet.GetRuleSet();
+  EXPECT_EQ(0u, rule_set.UniversalRules().size());
+  EXPECT_EQ(2u, rule_set.ClassRules(AtomicString("a")).size());
+}
+
+TEST(RuleSetTest, ParentPseudoBucketing_Multiple) {
+  test::TaskEnvironment task_environment;
+  css_test_helpers::TestStyleSheet sheet;
+  sheet.AddCSSRules(R"CSS(
+    .a, .b {
+      & {
+        color: green;
+      }
+    }
+  )CSS");
+  RuleSet& rule_set = sheet.GetRuleSet();
+  EXPECT_EQ(1u, rule_set.UniversalRules().size());
+  EXPECT_EQ(1u, rule_set.ClassRules(AtomicString("a")).size());
+  EXPECT_EQ(1u, rule_set.ClassRules(AtomicString("b")).size());
+}
+
+TEST(RuleSetTest, ScopePseudoBucketing_Single) {
+  test::TaskEnvironment task_environment;
+  css_test_helpers::TestStyleSheet sheet;
+  sheet.AddCSSRules(R"CSS(
+    @scope (.a) {
+      :scope {
+        color: green;
+      }
+    }
+  )CSS");
+  RuleSet& rule_set = sheet.GetRuleSet();
+  EXPECT_EQ(0u, rule_set.UniversalRules().size());
+  EXPECT_EQ(1u, rule_set.ClassRules(AtomicString("a")).size());
+}
+
+TEST(RuleSetTest, ScopePseudoBucketing_Multiple) {
+  test::TaskEnvironment task_environment;
+  css_test_helpers::TestStyleSheet sheet;
+  sheet.AddCSSRules(R"CSS(
+    @scope (.a, .b) {
+      :scope {
+        color: green;
+      }
+    }
+  )CSS");
+  RuleSet& rule_set = sheet.GetRuleSet();
+  EXPECT_EQ(1u, rule_set.UniversalRules().size());
+  EXPECT_EQ(0u, rule_set.ClassRules(AtomicString("a")).size());
+  EXPECT_EQ(0u, rule_set.ClassRules(AtomicString("b")).size());
+}
+
+TEST(RuleSetTest, ScopePseudoBucketing_WhereIs) {
+  test::TaskEnvironment task_environment;
+  css_test_helpers::TestStyleSheet sheet;
+  sheet.AddCSSRules(R"CSS(
+    @scope (.a) {
+      :where(:scope) {
+        color: green;
+      }
+      :is(:scope) {
+        color: green;
+      }
+    }
+  )CSS");
+  RuleSet& rule_set = sheet.GetRuleSet();
+  EXPECT_EQ(0u, rule_set.UniversalRules().size());
+  EXPECT_EQ(2u, rule_set.ClassRules(AtomicString("a")).size());
+}
+
+TEST(RuleSetTest, ScopePseudoBucketing_WhereIsMultiple) {
+  test::TaskEnvironment task_environment;
+  css_test_helpers::TestStyleSheet sheet;
+  sheet.AddCSSRules(R"CSS(
+    @scope (.a, .b) {
+      :where(:scope) {
+        color: green;
+      }
+      :is(:scope) {
+        color: green;
+      }
+    }
+  )CSS");
+  RuleSet& rule_set = sheet.GetRuleSet();
+  EXPECT_EQ(2u, rule_set.UniversalRules().size());
+  EXPECT_EQ(0u, rule_set.ClassRules(AtomicString("a")).size());
+  EXPECT_EQ(0u, rule_set.ClassRules(AtomicString("b")).size());
+}
+
+TEST(RuleSetTest, ScopePseudoBucketing_Implicit) {
+  test::TaskEnvironment task_environment;
+  css_test_helpers::TestStyleSheet sheet;
+  sheet.AddCSSRules(R"CSS(
+    @scope {
+      :scope {
+        color: green;
+      }
+    }
+  )CSS");
+  RuleSet& rule_set = sheet.GetRuleSet();
+  EXPECT_EQ(1u, rule_set.UniversalRules().size());
+}
+
+TEST(RuleSetTest, ScopePseudoBucketing_NestedDeclarations) {
+  test::TaskEnvironment task_environment;
+  css_test_helpers::TestStyleSheet sheet;
+  sheet.AddCSSRules(R"CSS(
+    .a {
+      @scope (&) {
+        color: green; /* Matches like :where(:scope) */
+      }
+    }
+  )CSS");
+  RuleSet& rule_set = sheet.GetRuleSet();
+  EXPECT_EQ(0u, rule_set.UniversalRules().size());
+  EXPECT_EQ(2u, rule_set.ClassRules(AtomicString("a")).size());
 }
 
 class RuleSetCascadeLayerTest : public SimTest {

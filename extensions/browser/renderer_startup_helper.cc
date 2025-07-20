@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/check_is_test.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
 #include "base/debug/dump_without_crashing.h"
@@ -26,11 +27,13 @@
 #include "extensions/browser/extension_function_dispatcher.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/l10n_file_util.h"
 #include "extensions/browser/network_permissions_updater.h"
 #include "extensions/browser/service_worker/service_worker_task_queue.h"
+#include "extensions/browser/user_script_manager.h"
 #include "extensions/browser/user_script_world_configuration_manager.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/extension_l10n_util.h"
@@ -44,6 +47,7 @@
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/manifest_handlers/shared_module_info.h"
 #include "extensions/common/message_bundle.h"
+#include "extensions/common/mojom/renderer.mojom.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ui/base/webui/web_ui_util.h"
@@ -122,6 +126,17 @@ mojom::ExtensionLoadedParamsPtr CreateExtensionLoadedParams(
     }
   }
 
+  // TODO(crbug.com/390138269): Optimize by only setting the value for the
+  // process(es) that host an extension that can use the userScripts API.
+  UserScriptManager* user_script_manager =
+      ExtensionSystem::Get(browser_context)->user_script_manager();
+  if (!user_script_manager) {
+    CHECK_IS_TEST();
+  }
+  bool user_scripts_allowed =
+      user_script_manager &&
+      user_script_manager->AreUserScriptsAllowed(extension);
+
   return mojom::ExtensionLoadedParams::New(
       extension.manifest()->value()->Clone(), extension.location(),
       extension.path(),
@@ -130,7 +145,8 @@ mojom::ExtensionLoadedParamsPtr CreateExtensionLoadedParams(
       std::move(tab_specific_permissions),
       permissions_data->policy_blocked_hosts(),
       permissions_data->policy_allowed_hosts(),
-      permissions_data->UsesDefaultPolicyHostRestrictions(), extension.id(),
+      permissions_data->UsesDefaultPolicyHostRestrictions(),
+      user_scripts_allowed, extension.id(),
       GetWorkerActivationToken(browser_context, extension),
       extension.creation_flags(), extension.guid());
 }
@@ -195,10 +211,7 @@ void RendererStartupHelper::InitializeProcess(
   // Extensions need to know the channel and the session type for API
   // restrictions. The values are sent to all renderers, as the non-extension
   // renderers may have content scripts.
-  bool is_lock_screen_context =
-      client->IsLockScreenContext(process->GetBrowserContext());
-  renderer->SetSessionInfo(GetCurrentChannel(), GetCurrentFeatureSessionType(),
-                           is_lock_screen_context);
+  renderer->SetSessionInfo(GetCurrentChannel(), GetCurrentFeatureSessionType());
 
   // Platform apps need to know the system font.
   // TODO(dbeam): this is not the system font in all cases.
@@ -212,7 +225,8 @@ void RendererStartupHelper::InitializeProcess(
 #if BUILDFLAG(ENABLE_GUEST_VIEW)
   // If the new render process is a WebView guest process, propagate the WebView
   // partition ID to it.
-  if (WebViewRendererState::GetInstance()->IsGuest(process->GetID())) {
+  if (WebViewRendererState::GetInstance()->IsGuest(
+          process->GetDeprecatedID())) {
     std::string webview_partition_id = WebViewGuest::GetPartitionID(process);
     renderer->SetWebViewPartitionID(webview_partition_id);
   }
@@ -401,13 +415,21 @@ void RendererStartupHelper::OnDeveloperModeChanged(bool in_developer_mode) {
   }
 }
 
+void RendererStartupHelper::OnUserScriptsAllowedChanged(
+    const ExtensionId& extension_id,
+    bool allowed) {
+  for (auto& process_entry : process_mojo_map_) {
+    content::RenderProcessHost* process = process_entry.first;
+    mojom::Renderer* renderer = GetRenderer(process);
+    if (renderer) {
+      renderer->SetUserScriptsAllowed(extension_id, allowed);
+    }
+  }
+}
+
 void RendererStartupHelper::SetUserScriptWorldProperties(
     const Extension& extension,
-    std::optional<std::string> world_id,
-    std::optional<std::string> csp,
-    bool enable_messaging) {
-  mojom::UserScriptWorldInfoPtr info = mojom::UserScriptWorldInfo::New(
-      extension.id(), std::move(world_id), std::move(csp), enable_messaging);
+    mojom::UserScriptWorldInfoPtr world_info) {
   for (auto& process_entry : process_mojo_map_) {
     content::RenderProcessHost* process = process_entry.first;
     mojom::Renderer* renderer = GetRenderer(process);
@@ -421,7 +443,7 @@ void RendererStartupHelper::SetUserScriptWorldProperties(
     }
 
     std::vector<mojom::UserScriptWorldInfoPtr> worlds_info;
-    worlds_info.push_back(info.Clone());
+    worlds_info.push_back(world_info.Clone());
     renderer->UpdateUserScriptWorlds(std::move(worlds_info));
   }
 }
@@ -474,7 +496,7 @@ BrowserContext* RendererStartupHelper::GetRendererBrowserContext() {
 }
 
 void RendererStartupHelper::AddAPIActionToActivityLog(
-    const ExtensionId& extension_id,
+    const std::optional<ExtensionId>& extension_id,
     const std::string& call_name,
     base::Value::List args,
     const std::string& extra) {
@@ -484,11 +506,12 @@ void RendererStartupHelper::AddAPIActionToActivityLog(
   }
 
   ExtensionsBrowserClient::Get()->AddAPIActionToActivityLog(
-      browser_context, extension_id, call_name, std::move(args), extra);
+      browser_context, extension_id.value_or(base::EmptyString()), call_name,
+      std::move(args), extra);
 }
 
 void RendererStartupHelper::AddEventToActivityLog(
-    const ExtensionId& extension_id,
+    const std::optional<ExtensionId>& extension_id,
     const std::string& call_name,
     base::Value::List args,
     const std::string& extra) {
@@ -498,7 +521,8 @@ void RendererStartupHelper::AddEventToActivityLog(
   }
 
   ExtensionsBrowserClient::Get()->AddEventToActivityLog(
-      browser_context, extension_id, call_name, std::move(args), extra);
+      browser_context, extension_id.value_or(base::EmptyString()), call_name,
+      std::move(args), extra);
 }
 
 void RendererStartupHelper::AddDOMActionToActivityLog(
@@ -532,6 +556,12 @@ void RendererStartupHelper::BindForRenderer(
           host->GetBrowserContext());
   renderer_startup_helper->receivers_.Add(renderer_startup_helper,
                                           std::move(receiver), process_id);
+}
+
+void RendererStartupHelper::FlushAllForTesting() {
+  for (auto& it : process_mojo_map_) {
+    it.second.FlushForTesting();  // IN-TEST
+  }
 }
 
 void RendererStartupHelper::GetMessageBundle(

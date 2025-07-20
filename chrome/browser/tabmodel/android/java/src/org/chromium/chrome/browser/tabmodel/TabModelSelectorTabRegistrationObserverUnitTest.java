@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import androidx.annotation.NonNull;
@@ -18,12 +19,12 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
+import org.chromium.base.Callback;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.price_tracking.PriceTrackingFeatures;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -39,12 +40,10 @@ import org.chromium.chrome.browser.tab_ui.TabContentManager;
 public class TabModelSelectorTabRegistrationObserverUnitTest {
     private static final long FAKE_NATIVE_ADDRESS = 123L;
 
-    @Rule public JniMocker mJniMocker = new JniMocker();
-
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private TabModelJniBridge.Natives mTabModelJniBridge;
     @Mock private TabContentManager mTabContentManager;
     @Mock private TabCreatorManager mTabCreatorManager;
-    @Mock private TabRemover mTabRemover;
 
     @Mock private Profile mProfile;
     @Mock private Profile mIncognitoProfile;
@@ -54,17 +53,15 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        mJniMocker.mock(
-                org.chromium.chrome.browser.tabmodel.TabModelJniBridgeJni.TEST_HOOKS,
-                mTabModelJniBridge);
-        when(mTabModelJniBridge.init(any(), any(), anyInt(), anyBoolean()))
+        TabModelJniBridgeJni.setInstanceForTesting(mTabModelJniBridge);
+        when(mTabModelJniBridge.init(
+                        any(TabModelJniBridge.class), any(Profile.class), anyInt(), anyBoolean()))
                 .thenReturn(FAKE_NATIVE_ADDRESS);
 
         when(mIncognitoProfile.isOffTheRecord()).thenReturn(true);
         when(mProfile.isOffTheRecord()).thenReturn(false);
 
-        PriceTrackingFeatures.setPriceTrackingEnabledForTesting(false);
+        PriceTrackingFeatures.setPriceAnnotationsEnabledForTesting(false);
 
         mTabModelSelector = createTabModelSelector();
         mTabRegistrationObserver = new TabModelSelectorTabRegistrationObserver(mTabModelSelector);
@@ -78,6 +75,11 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
                 AsyncTabParamsManagerFactory.createAsyncTabParamsManager();
         NextTabPolicy.NextTabPolicySupplier nextTabPolicySupplier =
                 () -> NextTabPolicy.HIERARCHICAL;
+        TabRemover normalTabRemover =
+                new PassthroughTabRemover(
+                        () ->
+                                selector.getTabGroupModelFilterProvider()
+                                        .getTabGroupModelFilter(false));
         TabModelImpl normalTabModel =
                 new TabModelImpl(
                         mProfile,
@@ -89,9 +91,14 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
                         nextTabPolicySupplier,
                         realAsyncTabParamsManager,
                         selector,
-                        mTabRemover,
+                        normalTabRemover,
                         /* supportUndo= */ true,
-                        /* trackInNativeModelList= */ true);
+                        /* isArchivedTabModel= */ false);
+        TabRemover incognitoTabRemover =
+                new PassthroughTabRemover(
+                        () ->
+                                selector.getTabGroupModelFilterProvider()
+                                        .getTabGroupModelFilter(true));
         TestIncognitoTabModel incognitoTabModel =
                 new TestIncognitoTabModel(
                         mIncognitoProfile,
@@ -103,14 +110,13 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
                         nextTabPolicySupplier,
                         realAsyncTabParamsManager,
                         selector,
-                        mTabRemover,
+                        incognitoTabRemover,
                         /* supportUndo= */ false,
                         /* trackInNativeModelList= */ true);
 
-        TabUngrouperFactory factory =
-                (isIncognitoBranded, tabGroupModelFilterSupplier) ->
-                        new PassthroughTabUngrouper(tabGroupModelFilterSupplier);
-        selector.initialize(normalTabModel, incognitoTabModel, factory);
+        selector.initialize(
+                TabModelHolderFactory.createTabModelHolderForTesting(normalTabModel),
+                TabModelHolderFactory.createIncognitoTabModelHolderForTesting(incognitoTabModel));
 
         return selector;
     }
@@ -205,13 +211,16 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
                         0,
                         TabLaunchType.FROM_LINK,
                         TabCreationState.LIVE_IN_FOREGROUND);
-        mTabModelSelector.getModel(false).removeTab(normalTab1);
+        mTabModelSelector
+                .getModel(false)
+                .getTabRemover()
+                .removeTab(normalTab1, /* allowDialog= */ false);
 
         TabModelSelectorTabRegistrationObserver.Observer observer =
                 mock(TabModelSelectorTabRegistrationObserver.Observer.class);
         mTabRegistrationObserver.addObserverAndNotifyExistingTabRegistration(observer);
         verify(observer).onTabRegistered(normalTab2);
-        Mockito.verifyNoMoreInteractions(observer);
+        verifyNoMoreInteractions(observer);
     }
 
     @Test
@@ -231,7 +240,10 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
 
         verify(observer).onTabRegistered(normalTab1);
 
-        mTabModelSelector.getModel(false).removeTab(normalTab1);
+        mTabModelSelector
+                .getModel(false)
+                .getTabRemover()
+                .removeTab(normalTab1, /* allowDialog= */ false);
 
         verify(observer).onTabUnregistered(normalTab1);
     }
@@ -252,7 +264,10 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
                         TabCreationState.LIVE_IN_FOREGROUND);
         verify(observer).onTabRegistered(normalTab1);
 
-        mTabModelSelector.getModel(false).removeTab(normalTab1);
+        mTabModelSelector
+                .getModel(false)
+                .getTabRemover()
+                .removeTab(normalTab1, /* allowDialog= */ false);
         verify(observer).onTabUnregistered(normalTab1);
     }
 
@@ -274,7 +289,10 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
 
         mTabModelSelector
                 .getModel(false)
-                .closeTabs(TabClosureParams.closeTab(normalTab1).allowUndo(true).build());
+                .getTabRemover()
+                .closeTabs(
+                        TabClosureParams.closeTab(normalTab1).allowUndo(true).build(),
+                        /* allowDialog= */ false);
         mTabModelSelector.getModel(false).commitTabClosure(normalTab1.getId());
         verify(observer).onTabUnregistered(normalTab1);
     }
@@ -305,9 +323,12 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
                         0,
                         TabLaunchType.FROM_LINK,
                         TabCreationState.LIVE_IN_FOREGROUND);
-        mTabModelSelector.getModel(false).removeTab(normalTab1);
+        mTabModelSelector
+                .getModel(false)
+                .getTabRemover()
+                .removeTab(normalTab1, /* allowDialog= */ false);
 
-        Mockito.verifyNoMoreInteractions(observer);
+        verifyNoMoreInteractions(observer);
     }
 
     @Test
@@ -347,9 +368,12 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
                         0,
                         TabLaunchType.FROM_LINK,
                         TabCreationState.LIVE_IN_FOREGROUND);
-        mTabModelSelector.getModel(false).removeTab(normalTab1);
+        mTabModelSelector
+                .getModel(false)
+                .getTabRemover()
+                .removeTab(normalTab1, /* allowDialog= */ false);
 
-        Mockito.verifyNoMoreInteractions(observer);
+        verifyNoMoreInteractions(observer);
     }
 
     private static class TestTabModelSelector extends TabModelSelectorBase {
@@ -361,8 +385,8 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
         public void requestToShowTab(Tab tab, int type) {}
 
         @Override
-        public boolean isSessionRestoreInProgress() {
-            return false;
+        public boolean isTabModelRestored() {
+            return true;
         }
     }
 
@@ -395,6 +419,9 @@ public class TabModelSelectorTabRegistrationObserverUnitTest {
                     supportUndo,
                     trackInNativeModelList);
         }
+
+        @Override
+        public void addDelegateModelObserver(Callback<TabModelInternal> callback) {}
 
         @Override
         public void addIncognitoObserver(IncognitoTabModelObserver observer) {}

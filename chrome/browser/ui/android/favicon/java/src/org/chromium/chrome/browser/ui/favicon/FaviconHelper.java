@@ -12,7 +12,6 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.content.res.AppCompatResources;
 
@@ -20,20 +19,20 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.url.GURL;
 
-import java.util.List;
-
 /**
  * This is a helper class to use favicon_service.cc's functionality.
  *
- * You can request a favicon image by web page URL. Note that an instance of
- * this class should be created & used & destroyed (by destroy()) in the same
- * thread due to the C++ base::CancelableTaskTracker class
- * requirement.
+ * <p>You can request a favicon image by web page URL. Note that an instance of this class should be
+ * created & used & destroyed (by destroy()) in the same thread due to the C++
+ * base::CancelableTaskTracker class requirement.
  */
+@NullMarked
 public class FaviconHelper {
     private long mNativeFaviconHelper;
 
@@ -49,23 +48,12 @@ public class FaviconHelper {
         public void onFaviconAvailable(Bitmap image, @JniType("GURL") GURL iconUrl);
     }
 
-    /** Similar to {@link FaviconImageCallback} but with a list of urls used in the image. */
-    public interface ComposedFaviconImageCallback {
-        /**
-         * @param image A composed image that contains some or all of the requested favicons.
-         * @param iconUrls An ordered array of the icon urls that were used.
-         */
-        @CalledByNative("ComposedFaviconImageCallback")
-        public void onComposedFaviconAvailable(
-                Bitmap image, @JniType("std::vector<GURL>") GURL[] iconUrls);
-    }
-
     /** Helper for generating default favicons and sharing the same icon between multiple views. */
     public static class DefaultFaviconHelper {
-        private Bitmap mChromeDarkBitmap;
-        private Bitmap mChromeLightBitmap;
-        private Bitmap mDefaultDarkBitmap;
-        private Bitmap mDefaultLightBitmap;
+        private @Nullable Bitmap mChromeDarkBitmap;
+        private @Nullable Bitmap mChromeLightBitmap;
+        private @Nullable Bitmap mDefaultDarkBitmap;
+        private @Nullable Bitmap mDefaultLightBitmap;
 
         private int getResourceId(GURL url) {
             return UrlUtilities.isInternalScheme(url)
@@ -213,49 +201,12 @@ public class FaviconHelper {
                         faviconImageCallback);
     }
 
-    /**
-     * Get a composed, up to 4, Favicon bitmap for the requested arguments.
-     * @param profile Profile used for the FaviconService construction.
-     * @param urls The list of URLs whose favicon are requested to compose. Size should be 2 to 4.
-     * @param desiredSizeInPixel The size of the favicon in pixel we want to get.
-     * @param composedFaviconImageCallback A method to be called back when the result is available.
-     *        Note that this callback is not called if this method returns false.
-     * @return True if GetLocalFaviconImageForURL is successfully called.
-     */
-    public boolean getComposedFaviconImage(
-            Profile profile,
-            @NonNull List<GURL> urls,
-            int desiredSizeInPixel,
-            ComposedFaviconImageCallback composedFaviconImageCallback) {
-        assert mNativeFaviconHelper != 0;
-
-        if (urls.size() <= 1 || urls.size() > 4) {
-            throw new IllegalStateException(
-                    "Only able to compose 2 to 4 favicon, but requested " + urls.size());
-        }
-
-        return FaviconHelperJni.get()
-                .getComposedFaviconImage(
-                        mNativeFaviconHelper,
-                        profile,
-                        urls.toArray(new GURL[0]),
-                        desiredSizeInPixel,
-                        composedFaviconImageCallback);
-    }
-
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     @NativeMethods
     public interface Natives {
         long init();
 
         void destroy(long nativeFaviconHelper);
-
-        boolean getComposedFaviconImage(
-                long nativeFaviconHelper,
-                @JniType("Profile*") Profile profile,
-                @JniType("std::vector<GURL>") GURL[] urls,
-                int desiredSizeInDip,
-                ComposedFaviconImageCallback composedFaviconImageCallback);
 
         boolean getLocalFaviconImageForURL(
                 long nativeFaviconHelper,

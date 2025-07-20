@@ -4,12 +4,12 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
-import androidx.annotation.NonNull;
-
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tab.Tab;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 
@@ -20,11 +20,14 @@ import java.util.List;
  * <p>Note that this class is scoped to the "tab_groups" package. It is used internally by {@link
  * TabGroupModelFilter} and any lookups for tab groups should go through that filter.
  */
+@NullMarked
 class TabGroup {
     static final int INVALID_ROOT_ID = -1;
     static final int INVALID_POSITION_IN_GROUP = -1;
 
     private final LinkedHashSet<Integer> mTabIds = new LinkedHashSet<>();
+    // Remove this once crbug.com/394394717 is fixed.
+    private final HashSet<Integer> mRemovedTabIds = new HashSet<>();
 
     private int mLastShownTabId = Tab.INVALID_TAB_ID;
 
@@ -37,7 +40,7 @@ class TabGroup {
      * @param tabList The list of all tabs in the model containing the tab with tabId. This is used
      *     to sort the tab group to match the order in the tab list.
      */
-    void addTab(int tabId, @NonNull TabList tabList) {
+    void addTab(int tabId, TabList tabList) {
         assert tabId != Tab.INVALID_TAB_ID;
 
         mTabIds.add(tabId);
@@ -57,6 +60,7 @@ class TabGroup {
             if (nextIdToShow != Tab.INVALID_TAB_ID) setLastShownTabId(nextIdToShow);
         }
         mTabIds.remove(tabId);
+        mRemovedTabIds.add(tabId);
     }
 
     /**
@@ -95,16 +99,23 @@ class TabGroup {
 
     /** Sets the tab ID that was last selected from the group. */
     void setLastShownTabId(int tabId) {
-        assert mTabIds.contains(tabId);
+        assert mTabIds.contains(tabId)
+                : "TabId was seen before: "
+                        + mRemovedTabIds.contains(tabId)
+                        + ", TabId is invalid: "
+                        + (tabId == Tab.INVALID_TAB_ID)
+                        + ", group size:"
+                        + size();
         mLastShownTabId = tabId;
     }
 
     /** Returns the ID of the first tab in the group. */
     int getTabIdOfFirstTab() {
-        return mTabIds.stream().findFirst().get();
+        return mTabIds.iterator().next();
     }
 
     /** Returns the ID of the last tab in the group. */
+    @SuppressWarnings("NoStreams") // No better way to do this while using LinkedHashSet.
     int getTabIdOfLastTab() {
         return mTabIds.stream().skip(mTabIds.size() - 1).findFirst().get();
     }
@@ -133,9 +144,9 @@ class TabGroup {
         return ids.get(position - 1);
     }
 
-    private void sortByTabListOrder(@NonNull TabList tabList) {
+    private void sortByTabListOrder(TabList tabList) {
         for (int i = 0; i < tabList.getCount(); i++) {
-            moveToEndInGroup(tabList.getTabAt(i).getId());
+            moveToEndInGroup(tabList.getTabAtChecked(i).getId());
         }
     }
 }

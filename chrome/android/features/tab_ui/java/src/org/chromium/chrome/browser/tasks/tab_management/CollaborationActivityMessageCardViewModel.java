@@ -27,6 +27,7 @@ import android.content.res.Resources;
 
 import androidx.annotation.PluralsRes;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tasks.tab_management.MessageCardView.DismissActionProvider;
 import org.chromium.chrome.browser.tasks.tab_management.MessageCardView.ReviewActionProvider;
 import org.chromium.chrome.browser.tasks.tab_management.MessageService.MessageType;
@@ -34,13 +35,14 @@ import org.chromium.chrome.tab_ui.R;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Wrapper around a {@link PropertyModel} for the activity collaboration message card. */
+@NullMarked
 public class CollaborationActivityMessageCardViewModel {
     private final PropertyModel mPropertyModel;
 
     /**
      * @param context The {@link Context} to use.
      * @param reviewActionProvider The provider for the review action.
-     * @param dismissActionProvider The provier for the dismiss action.
+     * @param dismissActionProvider The provider for the dismiss action.
      */
     public CollaborationActivityMessageCardViewModel(
             Context context,
@@ -77,13 +79,11 @@ public class CollaborationActivityMessageCardViewModel {
      * Updates the description text.
      *
      * @param context The {@link Context} to use.
-     * @param tabsAdded The number of tabs added.
-     * @param tabsChanged The number of tabs changed.
+     * @param tabsAdded The number of tabs added or changed.
      * @param tabsClosed The number of tabs closed.
      */
-    public void updateDescriptionText(
-            Context context, int tabsAdded, int tabsChanged, int tabsClosed) {
-        PluralData pluralData = getPluralData(tabsAdded, tabsChanged, tabsClosed);
+    public void updateDescriptionText(Context context, int tabsAdded, int tabsClosed) {
+        PluralData pluralData = getPluralData(tabsAdded, tabsClosed);
 
         String descriptionText;
         if (pluralData.id == Resources.ID_NULL) {
@@ -93,11 +93,7 @@ public class CollaborationActivityMessageCardViewModel {
             descriptionText =
                     context.getResources()
                             .getQuantityString(
-                                    pluralData.id,
-                                    pluralData.quantity,
-                                    tabsAdded,
-                                    tabsChanged,
-                                    tabsClosed);
+                                    pluralData.id, pluralData.quantity, tabsAdded, tabsClosed);
         }
 
         mPropertyModel.set(DESCRIPTION_TEXT, descriptionText);
@@ -105,52 +101,24 @@ public class CollaborationActivityMessageCardViewModel {
 
     private static class PluralData {
         public @PluralsRes int id = Resources.ID_NULL;
+        // Used for deciding pluralization of the noun.
         public int quantity;
     }
 
-    private PluralData getPluralData(int tabsAdded, int tabsChanged, int tabsClosed) {
+    private PluralData getPluralData(int tabsAdded, int tabsClosed) {
         PluralData pluralData = new PluralData();
         if (tabsAdded > 0) {
             pluralData.quantity = tabsAdded;
-            if (tabsChanged > 0) {
-                if (tabsClosed > 0) {
-                    pluralData.id =
-                            R.plurals
-                                    .tab_grid_dialog_collaboration_activity_tabs_added_changed_closed;
-                    return pluralData;
-                }
-
-                pluralData.id = R.plurals.tab_grid_dialog_collaboration_activity_tabs_added_changed;
-                return pluralData;
-            }
-
             if (tabsClosed > 0) {
                 pluralData.id = R.plurals.tab_grid_dialog_collaboration_activity_tabs_added_closed;
-                return pluralData;
+            } else {
+                pluralData.id = R.plurals.tab_grid_dialog_collaboration_activity_tabs_added;
             }
-
-            pluralData.id = R.plurals.tab_grid_dialog_collaboration_activity_tabs_added;
             return pluralData;
-        }
-
-        if (tabsChanged > 0) {
-            pluralData.quantity = tabsChanged;
-            if (tabsClosed > 0) {
-                pluralData.id =
-                        R.plurals.tab_grid_dialog_collaboration_activity_tabs_changed_closed;
-                return pluralData;
-            }
-
-            pluralData.id = R.plurals.tab_grid_dialog_collaboration_activity_tabs_changed;
-            return pluralData;
-        }
-
-        if (tabsClosed > 0) {
+        } else if (tabsClosed > 0) {
             pluralData.quantity = tabsClosed;
             pluralData.id = R.plurals.tab_grid_dialog_collaboration_activity_tabs_closed;
-            return pluralData;
         }
-
         return pluralData;
     }
 }

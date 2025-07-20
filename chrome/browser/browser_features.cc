@@ -7,7 +7,6 @@
 #include "base/feature_list.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "chrome/browser/net/system_network_context_manager.h"
@@ -61,9 +60,20 @@ BASE_FEATURE(kCertificateTransparencyAskBeforeEnabling,
 // fail to validate with network time will fall back to the system time.
 // This has no effect if the network_time::kNetworkTimeServiceQuerying flag is
 // disabled, or the BrowserNetworkTimeQueriesEnabled policy is set to false.
+#if !BUILDFLAG(IS_CHROMEOS)
+BASE_FEATURE(kCertVerificationNetworkTime,
+             "CertVerificationNetworkTime",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#else
 BASE_FEATURE(kCertVerificationNetworkTime,
              "CertVerificationNetworkTime",
              base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+
+// Killswitch that guards clearing all user data in the ProfileImpl destructor.
+BASE_FEATURE(kClearUserDataUponProfileDestruction,
+             "ClearUserDataUponProfileDestruction",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_LINUX)
 // Enables usage of os_crypt_async::SecretPortalKeyProvider.  Once
@@ -72,16 +82,19 @@ BASE_FEATURE(kCertVerificationNetworkTime,
 BASE_FEATURE(kDbusSecretPortal,
              "DbusSecretPortal",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Enables usage of os_crypt_async::FreedesktopSecretKeyProvider, which is
+// compatible with the synchronous backend.
+BASE_FEATURE(kUseFreedesktopSecretKeyProvider,
+             "UseFreedesktopSecretKeyProvider",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_LINUX)
 
 // Destroy profiles when their last browser window is closed, instead of when
 // the browser exits.
-// On Lacros the feature is enabled only for secondary profiles, check the
-// implementation of `ProfileManager::ProfileInfo::FromUnownedProfile()`.
 BASE_FEATURE(kDestroyProfileOnBrowserClose,
              "DestroyProfileOnBrowserClose",
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || \
-    BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
              base::FEATURE_ENABLED_BY_DEFAULT);
 #else
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -101,14 +114,6 @@ BASE_FEATURE(kDoubleTapToZoomInTabletMode,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
-#if BUILDFLAG(IS_WIN)
-// When this feature is enabled, the App-Bound encryption provider is used as
-// the default encryption provider.
-BASE_FEATURE(kUseAppBoundEncryptionProviderForEncryption,
-             "UseAppBoundEncryptionProviderForEncryption",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-#endif  // BUILDFLAG(IS_WIN)
-
 // Enables showing the email of the flex org admin that setup CBCM in the
 // management disclosures.
 BASE_FEATURE(kFlexOrgManagementDisclosure,
@@ -127,7 +132,11 @@ BASE_FEATURE(kFlexOrgManagementDisclosure,
 // https://github.com/MicrosoftEdge/MSEdgeExplainers/blob/main/Notifications/notifications_actions_customization.md
 BASE_FEATURE(kIncomingCallNotifications,
              "IncomingCallNotifications",
+#if BUILDFLAG(IS_WIN)
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#else
              base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(IS_WIN)
 
 #if !BUILDFLAG(IS_ANDROID)
 // Adds a "Snooze" action to mute notifications during screen sharing sessions.
@@ -159,24 +168,6 @@ base::FeatureParam<bool> kNotificationOneTapUnsubscribeUseServiceIntentParam{
     &kNotificationOneTapUnsubscribe, "use_service_intent", false};
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS)
-// Enables AES keys support in the chrome.enterprise.platformKeys and
-// chrome.platformKeys APIs. The new operations include `sign`, `encrypt` and
-// `decrypt`. For additional details, see the proposal tracked in b/288880151.
-BASE_FEATURE(kPlatformKeysAesEncryption,
-             "PlatformKeysAesEncryption",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
-// Disables prerendering on the default search engine predictor. This is useful
-// in comparing the impact of the SupportSearchSuggestionForPrerender2 feature
-// during its rollout. Once that rollout is complete, this feature should be
-// removed and instead we should add a new long-term holdback to
-// PreloadingConfig.
-BASE_FEATURE(kPrerenderDSEHoldback,
-             "PrerenderDSEHoldback",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Enables executing the browser commands sent by the NTP promos.
 BASE_FEATURE(kPromoBrowserCommands,
              "PromoBrowserCommands",
@@ -189,14 +180,6 @@ BASE_FEATURE(kPromoBrowserCommands,
 // ui/webui/resources/js/browser_command/browser_command.mojom
 const char kBrowserCommandIdParam[] = "BrowserCommandIdParam";
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-// Enables reading and writing PWA notification permissions from quick settings
-// menu.
-BASE_FEATURE(kQuickSettingsPWANotifications,
-             "QuickSettingsPWA",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-#endif
-
 #if !BUILDFLAG(IS_ANDROID)
 // Keeps accessibility enabled for WebContents as ReadAnything observes changes
 // to the active WebContents. This is a holdback study to evaluate the impact of
@@ -207,11 +190,16 @@ BASE_FEATURE(kReadAnythingPermanentAccessibility,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
+#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 // When this feature is enabled, Chrome will register os_update_handler with
 // Omaha, to be run on OS upgrade.
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 BASE_FEATURE(kRegisterOsUpdateHandlerWin,
              "RegisterOsUpdateHandlerWin",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+// When this feature is enabled, Chrome will install the
+// platform_experience_helper.
+BASE_FEATURE(kInstallPlatformExperienceHelperWin,
+             "InstallPlatformExperienceHelperWin",
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
@@ -254,13 +242,13 @@ BASE_FEATURE(kSandboxExternalProtocolBlockedWarning,
 BASE_FEATURE(kSecretPortalKeyProviderUseForEncryption,
              "SecretPortalKeyProviderUseForEncryption",
              base::FEATURE_DISABLED_BY_DEFAULT);
-#endif  // BUILDFLAG(IS_LINUX)
 
-// This flag controls whether to trigger prerendering when the default search
-// engine suggests to prerender a search result.
-BASE_FEATURE(kSupportSearchSuggestionForPrerender2,
-             "SupportSearchSuggestionForPrerender2",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+// If true, encrypt new data with the key provided by
+// FreedesktopSecretKeyProvider. Otherwise, it will only decrypt existing data.
+BASE_FEATURE(kUseFreedesktopSecretKeyProviderForEncryption,
+             "UseFreedesktopSecretKeyProviderForEncryption",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(IS_LINUX)
 
 // Enables migration of the network context data from `unsandboxed_data_path` to
 // `data_path`. See the explanation in network_context.mojom.
@@ -278,11 +266,9 @@ BASE_FEATURE(kTriggerNetworkDataMigration,
 // If disabled, the blue border is not used on ChromeOS.
 //
 // Motivation:
-//  The blue border behavior used to cause problems on ChromeOS - see
-//  crbug.com/1320262 for Ash (fixed) and crbug.com/1030925 for Lacros
-//  (relatively old bug - we would like to observe whether it's still
-//  there). This flag is introduced as means of disabling this feature in case
-//  of possible future regressions.
+//  The blue border behavior used to (still does, see below) cause problems on
+//  ChromeOS - see crbug.com/1320262 (fixed). This flag is introduced as means
+//  of disabling this feature in case of possible future regressions.
 //
 // TODO(crbug.com/40198577): Remove this flag once we confirm that blue border
 // works fine on ChromeOS.
@@ -330,7 +316,7 @@ BASE_FEATURE(kNoPreReadMainDll,
 // Chrome DLL is on an SSD (i.e. pre-read only on spinning disk).
 BASE_FEATURE(kNoPreReadMainDllIfSsd,
              "NoPreReadMainDllIfSsd",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // When enabled, the browser process suppresses pre-read in child processes
 // shortly after browser startup, where "shortly after" is dictated by the
@@ -349,6 +335,11 @@ const base::FeatureParam<base::TimeDelta>
     kNoPreReadMainDllStartup_StartupDuration{&kNoPreReadMainDllStartup,
                                              "no-preread-dll-startup-time",
                                              base::Minutes(2)};
+
+// When enabled, the browser process will re-launch itself when launched with
+// an elevated linked token. The re-launched browser will use the token from
+// the Windows Shell (explorer.exe), which is typically non-elevated.
+BASE_FEATURE(kAutoDeElevate, "AutoDeElevate", base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_WIN)
 
 #if !BUILDFLAG(IS_ANDROID)

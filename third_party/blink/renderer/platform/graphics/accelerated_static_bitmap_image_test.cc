@@ -2,13 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/platform/graphics/accelerated_static_bitmap_image.h"
 
+#include "base/compiler_specific.h"
 #include "base/functional/callback_helpers.h"
 #include "base/test/null_task_runner.h"
 #include "base/test/task_environment.h"
@@ -18,6 +14,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
+#include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_gles2_interface.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_web_graphics_context_3d_provider.h"
 #include "third_party/blink/renderer/platform/graphics/test/gpu_test_utils.h"
@@ -38,7 +35,7 @@ using testing::Test;
 
 class MockGLES2InterfaceWithSyncTokenSupport : public viz::TestGLES2Interface {
  public:
-  MOCK_METHOD1(GenSyncTokenCHROMIUM, void(GLbyte*));
+  MOCK_METHOD1(GenUnverifiedSyncTokenCHROMIUM, void(GLbyte*));
   MOCK_METHOD1(WaitSyncTokenCHROMIUM, void(const GLbyte*));
 };
 
@@ -53,16 +50,15 @@ gpu::SyncToken GenTestSyncToken(GLbyte id) {
   return token;
 }
 
-scoped_refptr<StaticBitmapImage> CreateBitmap() {
-  auto client_si = gpu::ClientSharedImage::CreateForTesting();
+scoped_refptr<StaticBitmapImage> CreateBitmap(
+    gpu::SharedImageUsageSet usage = gpu::SharedImageUsageSet()) {
+  auto client_si = gpu::ClientSharedImage::CreateForTesting(usage);
 
   return AcceleratedStaticBitmapImage::CreateFromCanvasSharedImage(
-      std::move(client_si), GenTestSyncToken(100), 0,
-      SkImageInfo::MakeN32Premul(100, 100), GL_TEXTURE_2D, true,
-      SharedGpuContext::ContextProviderWrapper(),
+      std::move(client_si), GenTestSyncToken(100), 0, kPremul_SkAlphaType,
+      gfx::ColorSpace::CreateSRGB(), SharedGpuContext::ContextProviderWrapper(),
       base::PlatformThread::CurrentRef(),
-      base::MakeRefCounted<base::NullTaskRunner>(), base::DoNothing(),
-      /*supports_display_compositing=*/true, /*is_overlay_candidate=*/true);
+      base::MakeRefCounted<base::NullTaskRunner>(), base::DoNothing());
 }
 
 class AcceleratedStaticBitmapImageTest : public Test {
@@ -93,7 +89,8 @@ TEST_F(AcceleratedStaticBitmapImageTest, SkImageCached) {
 }
 
 TEST_F(AcceleratedStaticBitmapImageTest, CopyToTextureSynchronization) {
-  auto bitmap = CreateBitmap();
+  auto bitmap = CreateBitmap(gpu::SHARED_IMAGE_USAGE_GLES2_READ |
+                             gpu::SHARED_IMAGE_USAGE_GLES2_WRITE);
 
   MockGLES2InterfaceWithSyncTokenSupport destination_gl;
 
@@ -104,30 +101,31 @@ TEST_F(AcceleratedStaticBitmapImageTest, CopyToTextureSynchronization) {
 
   // Anterior synchronization. Wait on the sync token for the mailbox on the
   // dest context.
-  EXPECT_CALL(destination_gl, WaitSyncTokenCHROMIUM(Pointee(SyncTokenMatcher(
-                                  bitmap->GetMailboxHolder().sync_token))))
+  EXPECT_CALL(
+      destination_gl,
+      WaitSyncTokenCHROMIUM(Pointee(SyncTokenMatcher(bitmap->GetSyncToken()))))
       .Times(testing::Between(1, 2));
 
   // Posterior synchronization. Generate a sync token on the destination context
   // to ensure mailbox is destroyed after the copy.
   const gpu::SyncToken sync_token2 = GenTestSyncToken(2);
-  EXPECT_CALL(destination_gl, GenSyncTokenCHROMIUM(_))
+  EXPECT_CALL(destination_gl, GenUnverifiedSyncTokenCHROMIUM(_))
       .WillOnce(SetArrayArgument<0>(
           sync_token2.GetConstData(),
-          sync_token2.GetConstData() + sizeof(gpu::SyncToken)));
+          UNSAFE_TODO(sync_token2.GetConstData() + sizeof(gpu::SyncToken))));
 
   gfx::Point dest_point(0, 0);
   gfx::Rect source_sub_rectangle(0, 0, 10, 10);
   ASSERT_TRUE(bitmap->CopyToTexture(
-      &destination_gl, GL_TEXTURE_2D, 1 /*dest_texture_id*/,
-      0 /*dest_texture_level*/, false /*unpack_premultiply_alpha*/,
-      false /*unpack_flip_y*/, dest_point, source_sub_rectangle));
+      &destination_gl, GL_TEXTURE_2D, /*dest_texture_id=*/1,
+      /*dest_level=*/0, kUnpremul_SkAlphaType, kTopLeft_GrSurfaceOrigin,
+      dest_point, source_sub_rectangle));
 
   testing::Mock::VerifyAndClearExpectations(&gl_);
   testing::Mock::VerifyAndClearExpectations(&destination_gl);
 
   // Final wait is postponed until destruction.
-  EXPECT_EQ(bitmap->GetMailboxHolder().sync_token, sync_token2);
+  EXPECT_EQ(bitmap->GetSyncToken(), sync_token2);
 }
 
 }  // namespace

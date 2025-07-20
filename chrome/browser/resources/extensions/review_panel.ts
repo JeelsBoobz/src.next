@@ -19,13 +19,14 @@ import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
 import type {ItemDelegate} from './item.js';
 import {convertSafetyCheckReason, SAFETY_HUB_EXTENSION_KEPT_HISTOGRAM_NAME, SAFETY_HUB_EXTENSION_REMOVED_HISTOGRAM_NAME, SAFETY_HUB_EXTENSION_SHOWN_HISTOGRAM_NAME, SAFETY_HUB_WARNING_REASON_MAX_SIZE} from './item_util.js';
+import {navigation, Page} from './navigation_helper.js';
 import {getCss} from './review_panel.css.js';
 import {getHtml} from './review_panel.html.js';
 
 export interface ExtensionsReviewPanelElement {
   $: {
     makeExceptionMenu: CrActionMenuElement,
-    reviewPanelContainer: HTMLDivElement,
+    reviewPanelContainer: HTMLElement,
     expandButton: CrExpandButtonElement,
     safetyHubTitleContainer: HTMLElement,
     headingText: HTMLElement,
@@ -35,6 +36,9 @@ export interface ExtensionsReviewPanelElement {
 }
 
 const ExtensionsReviewPanelElementBase = I18nMixinLit(CrLitElement);
+
+const SAFETY_HUB_EXTENSION_THREE_DOT_DETAILS =
+    'SafeBrowsing.ExtensionSafetyHub.ThreeDotDetails';
 
 export class ExtensionsReviewPanelElement extends
     ExtensionsReviewPanelElementBase {
@@ -94,14 +98,14 @@ export class ExtensionsReviewPanelElement extends
     };
   }
 
-  delegate?: ItemDelegate;
-  extensions: chrome.developerPrivate.ExtensionInfo[] = [];
-  protected headerString_: string = '';
-  protected subtitleString_: string = '';
-  protected unsafeExtensionsReviewListExpanded_: boolean = true;
-  protected completionMessage_: string = '';
-  protected shouldShowCompletionInfo_: boolean = false;
-  protected shouldShowUnsafeExtensions_: boolean = false;
+  accessor delegate: ItemDelegate|undefined;
+  accessor extensions: chrome.developerPrivate.ExtensionInfo[] = [];
+  protected accessor headerString_: string = '';
+  protected accessor subtitleString_: string = '';
+  protected accessor unsafeExtensionsReviewListExpanded_: boolean = true;
+  protected accessor completionMessage_: string = '';
+  protected accessor shouldShowCompletionInfo_: boolean = false;
+  protected accessor shouldShowUnsafeExtensions_: boolean = false;
 
   /**
    * Tracks if the last action that led to the number of extensions
@@ -184,12 +188,23 @@ export class ExtensionsReviewPanelElement extends
   }
 
   protected shouldShowExtensionsSafetyHub_(): boolean {
-    return loadTimeData.getBoolean('safetyHubShowReviewPanel') &&
-        (this.shouldShowUnsafeExtensions_ || this.shouldShowCompletionInfo_);
+    return this.shouldShowUnsafeExtensions_ || this.shouldShowCompletionInfo_;
   }
 
   protected shouldShowSafetyHubRemoveAllButton_(): boolean {
     return this.extensions?.length !== 1;
+  }
+
+  protected shouldShowThreeDotDetails_(): boolean {
+    return loadTimeData.getBoolean('safetyHubThreeDotDetails');
+  }
+
+  protected onDetailsClick_() {
+    chrome.metricsPrivate.recordCount(
+        SAFETY_HUB_EXTENSION_THREE_DOT_DETAILS, 1);
+    navigation.navigateTo(
+        {page: Page.DETAILS, extensionId: this.lastClickedExtensionId_});
+    this.$.makeExceptionMenu.close();
   }
 
   protected onUnsafeExtensionsReviewListExpandedChanged_(

@@ -78,6 +78,9 @@ void RenderProcessPriority::WriteIntoTrace(
     case ChildProcessImportance::MODERATE:
       proto->set_importance(PriorityProto::IMPORTANCE_MODERATE);
       break;
+    case ChildProcessImportance::PERCEPTIBLE:
+      proto->set_importance(PriorityProto::IMPORTANCE_PERCEPTIBLE);
+      break;
   }
 #endif
 }
@@ -100,8 +103,12 @@ ChildProcessLauncher::ChildProcessLauncher(
     mojo::OutgoingInvitation mojo_invitation,
     const mojo::ProcessErrorCallback& process_error_callback,
     std::unique_ptr<ChildProcessLauncherFileData> file_data,
-    base::UnsafeSharedMemoryRegion histogram_memory_region,
-    base::ReadOnlySharedMemoryRegion tracing_config_memory_region,
+    scoped_refptr<base::RefCountedData<base::UnsafeSharedMemoryRegion>>
+        histogram_memory_region,
+    scoped_refptr<base::RefCountedData<base::ReadOnlySharedMemoryRegion>>
+        tracing_config_memory_region,
+    scoped_refptr<base::RefCountedData<base::UnsafeSharedMemoryRegion>>
+        tracing_output_memory_region,
     bool terminate_on_shutdown)
     : client_(client),
       starting_(true),
@@ -128,7 +135,8 @@ ChildProcessLauncher::ChildProcessLauncher(
 #endif
       std::move(mojo_invitation), process_error_callback, std::move(file_data),
       std::move(histogram_memory_region),
-      std::move(tracing_config_memory_region));
+      std::move(tracing_config_memory_region),
+      std::move(tracing_output_memory_region));
   helper_->StartLaunchOnClientThread();
 }
 
@@ -156,12 +164,12 @@ void ChildProcessLauncher::SetRenderProcessPriority(
 void ChildProcessLauncher::SetProcessPriority(
     base::Process::Priority priority) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  base::Process to_pass = process_.process.Duplicate();
-  GetProcessLauncherTaskRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread,
-          helper_, std::move(to_pass), priority));
+
+  if (priority == priority_) {
+    return;
+  }
+
+  SetProcessPriorityImpl(priority);
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
@@ -178,6 +186,20 @@ void ChildProcessLauncher::Notify(ChildProcessLauncherHelper::Process process,
 
   if (process_.process.IsValid()) {
     process_start_time_ = base::TimeTicks::Now();
+
+#if BUILDFLAG(IS_MAC)
+    // On mac, the task port is required to change the priority of the child
+    // process.
+    auto* port_provider = ChildProcessTaskPortProvider::GetInstance();
+    CHECK(port_provider);
+    if (port_provider->TaskForHandle(process_.process.Handle()) ==
+        MACH_PORT_NULL) {
+      // In the most common case, the task port is not available at launch time.
+      scoped_port_provider_observation_.Observe(port_provider);
+    }
+#endif
+
+    // Note:: May delete |this|.
     client_->OnProcessLaunched();
   } else {
     termination_info_.status = base::TERMINATION_STATUS_LAUNCH_FAILED;
@@ -190,6 +212,41 @@ void ChildProcessLauncher::Notify(ChildProcessLauncherHelper::Process process,
     client_->OnProcessLaunchFailed(error_code);
   }
 }
+
+#if BUILDFLAG(IS_MAC)
+void ChildProcessLauncher::OnReceivedTaskPort(
+    base::ProcessHandle process_handle) {
+  if (!process_.process.IsValid()) {
+    // The process has died since. No need to keep observing for task ports.
+    scoped_port_provider_observation_.Reset();
+    return;
+  }
+
+  // Ignore notifications about different processes.
+  if (process_.process.Handle() != process_handle) {
+    return;
+  }
+
+  scoped_port_provider_observation_.Reset();
+
+  if (priority_) {
+    SetProcessPriorityImpl(*priority_);
+  }
+}
+#endif
+
+#if !BUILDFLAG(IS_ANDROID)
+void ChildProcessLauncher::SetProcessPriorityImpl(
+    base::Process::Priority priority) {
+  priority_ = priority;
+  base::Process to_pass = process_.process.Duplicate();
+  GetProcessLauncherTaskRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          &ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread,
+          helper_, std::move(to_pass), priority));
+}
+#endif
 
 bool ChildProcessLauncher::IsStarting() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -278,6 +335,51 @@ ChildProcessLauncher::Client* ChildProcessLauncher::ReplaceClientForTest(
   return ret;
 }
 
+RenderProcessPriority::RenderProcessPriority(
+    bool visible,
+    bool has_media_stream,
+    bool has_immersive_xr_session,
+    bool has_foreground_service_worker,
+    unsigned int frame_depth,
+    bool intersects_viewport,
+    bool boost_for_pending_views,
+    bool boost_for_loading,
+    bool is_spare_renderer
+#if BUILDFLAG(IS_ANDROID)
+    ,
+    ChildProcessImportance importance
+#endif
+#if !BUILDFLAG(IS_ANDROID)
+    ,
+    std::optional<base::Process::Priority> priority_override
+#endif
+    )
+    : visible(visible),
+      has_media_stream(has_media_stream),
+      has_immersive_xr_session(has_immersive_xr_session),
+      has_foreground_service_worker(has_foreground_service_worker),
+      frame_depth(frame_depth),
+      intersects_viewport(intersects_viewport),
+      boost_for_pending_views(boost_for_pending_views),
+      boost_for_loading(boost_for_loading),
+      is_spare_renderer(is_spare_renderer)
+#if BUILDFLAG(IS_ANDROID)
+      ,
+      importance(importance)
+#endif
+#if !BUILDFLAG(IS_ANDROID)
+      ,
+      priority_override(priority_override)
+#endif
+{
+}
+
+RenderProcessPriority::RenderProcessPriority(const RenderProcessPriority&) =
+    default;
+
+RenderProcessPriority& RenderProcessPriority::operator=(
+    const RenderProcessPriority&) = default;
+
 bool RenderProcessPriority::is_background() const {
 #if !BUILDFLAG(IS_ANDROID)
   if (priority_override) {
@@ -294,8 +396,9 @@ bool RenderProcessPriority::is_background() const {
     return *priority_override == base::Process::Priority::kBestEffort;
   }
 #endif
-  return !visible && !has_media_stream && !boost_for_pending_views &&
-         !has_foreground_service_worker && !boost_for_loading;
+  return !visible && !has_media_stream && !has_immersive_xr_session &&
+         !boost_for_pending_views && !has_foreground_service_worker &&
+         !boost_for_loading;
 }
 
 base::Process::Priority RenderProcessPriority::GetProcessPriority() const {
@@ -319,9 +422,6 @@ base::Process::Priority RenderProcessPriority::GetProcessPriority() const {
 }
 
 bool RenderProcessPriority::operator==(
-    const RenderProcessPriority& other) const = default;
-
-bool RenderProcessPriority::operator!=(
     const RenderProcessPriority& other) const = default;
 
 }  // namespace content

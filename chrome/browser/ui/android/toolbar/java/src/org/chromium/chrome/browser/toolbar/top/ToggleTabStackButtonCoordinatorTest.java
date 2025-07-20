@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.toolbar.top;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
@@ -12,22 +13,25 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import android.content.Context;
+import android.app.Activity;
 import android.graphics.Canvas;
 import android.view.View.OnClickListener;
 import android.view.View.OnLongClickListener;
 
+import androidx.test.ext.junit.rules.ActivityScenarioRule;
+
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.LooperMode;
 
-import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
@@ -35,51 +39,69 @@ import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutType;
+import org.chromium.chrome.browser.preferences.Pref;
+import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.tab_ui.TabModelDotInfo;
+import org.chromium.chrome.browser.tabmodel.IncognitoStateProvider;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.theme.TopUiThemeColorProvider;
 import org.chromium.chrome.browser.toolbar.R;
-import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
 import org.chromium.chrome.browser.user_education.IphCommand;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
 import org.chromium.components.feature_engagement.FeatureConstants;
+import org.chromium.components.prefs.PrefService;
+import org.chromium.components.user_prefs.UserPrefs;
+import org.chromium.components.user_prefs.UserPrefsJni;
+import org.chromium.ui.base.TestActivity;
 
 import java.util.HashSet;
 import java.util.Set;
 
-/** Unit tests for ToggleTabStackButtonCoordinator. */
+/** Unit tests for {@link ToggleTabStackButtonCoordinator}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @LooperMode(LooperMode.Mode.LEGACY)
 public class ToggleTabStackButtonCoordinatorTest {
 
-    @Mock private Context mContext;
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+    @Rule public final ActivityScenarioRule<TestActivity> mActivityScenarioRule =
+            new ActivityScenarioRule<>(TestActivity.class);
     @Mock private LayoutStateProvider mLayoutStateProvider;
     @Mock private ToggleTabStackButton mToggleTabStackButton;
-    @Mock private android.content.res.Resources mResources;
     @Mock private UserEducationHelper mUserEducationHelper;
     @Mock private OnClickListener mOnClickListener;
     @Mock private OnLongClickListener mOnLongClickListener;
     @Mock private TabModelSelector mTabModelSelector;
-    @Mock private TabModel mTabModel;
+    @Mock private TabModel mStandardTabModel;
+    @Mock private TabModel mIncognitoTabModel;
+    @Mock private TopUiThemeColorProvider mTopUIThemeProvider;
+    @Mock private IncognitoStateProvider mIncognitoStateProvider;
+    @Mock private Profile mProfile;
+    @Mock private PrefService mPrefService;
+    @Mock private UserPrefs.Natives mUserPrefsJniMock;
 
     @Captor private ArgumentCaptor<IphCommand> mIphCommandCaptor;
 
-    private boolean mIsIncognito;
-    private boolean mOverviewOpen;
+    private Activity mActivity;
+    private final ObservableSupplierImpl<TabModelDotInfo> mNotificationDotSupplier =
+            new ObservableSupplierImpl<>(TabModelDotInfo.HIDE);
     private final OneshotSupplierImpl<Boolean> mPromoShownOneshotSupplier =
             new OneshotSupplierImpl<>();
+    private final ObservableSupplierImpl<Integer> mTabCountSupplier =
+            new ObservableSupplierImpl<>(0);
+
+    private boolean mOverviewOpen;
     private Set<LayoutStateProvider.LayoutStateObserver> mLayoutStateObserverSet;
     private OneshotSupplierImpl<LayoutStateProvider> mLayoutSateProviderOneshotSupplier;
-    private ObservableSupplier<Integer> mTabCountSupplier;
-    private ObservableSupplierImpl<Integer> mArchivedTabCountSupplier;
 
     private ToggleTabStackButtonCoordinator mCoordinator;
     private ObservableSupplierImpl<TabModelSelector> mTabModelSelectorSupplier;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
+        mActivityScenarioRule.getScenario().onActivity(activity -> mActivity = activity);
+        mActivity.setTheme(R.style.Theme_BrowserUI_DayNight);
 
-        when(mContext.getResources()).thenReturn(mResources);
         doAnswer(invocation -> mOverviewOpen)
                 .when(mLayoutStateProvider)
                 .isLayoutVisible(LayoutType.TAB_SWITCHER);
@@ -102,30 +124,43 @@ public class ToggleTabStackButtonCoordinatorTest {
         mLayoutSateProviderOneshotSupplier = new OneshotSupplierImpl<>();
         mTabModelSelectorSupplier = new ObservableSupplierImpl<>();
         mTabModelSelectorSupplier.set(mTabModelSelector);
+        when(mTabModelSelector.getCurrentModel()).thenReturn(mStandardTabModel);
+        when(mTabModelSelector.getModel(true)).thenReturn(mIncognitoTabModel);
+        when(mStandardTabModel.isIncognitoBranded()).thenReturn(false);
+        when(mIncognitoTabModel.isIncognitoBranded()).thenReturn(true);
+        when(mIncognitoTabModel.getCount()).thenReturn(0);
 
         // Defaults most test cases expect, can be overridden by each test though.
         when(mToggleTabStackButton.isShown()).thenReturn(true);
-        mIsIncognito = false;
+        when(mIncognitoStateProvider.isIncognitoSelected()).thenReturn(false);
         mCoordinator = newToggleTabStackButtonCoordinator(mToggleTabStackButton);
+
+        when(mUserPrefsJniMock.get(mProfile)).thenReturn(mPrefService);
+        when(mPrefService.getBoolean(Pref.AUTO_OPEN_SYNCED_TAB_GROUPS)).thenReturn(false);
+        UserPrefsJni.setInstanceForTesting(mUserPrefsJniMock);
     }
 
     private ToggleTabStackButtonCoordinator newToggleTabStackButtonCoordinator(
             ToggleTabStackButton toggleTabStackButton) {
         ToggleTabStackButtonCoordinator coordinator =
                 new ToggleTabStackButtonCoordinator(
-                        mContext,
+                        mActivity,
                         toggleTabStackButton,
                         mUserEducationHelper,
-                        () -> mIsIncognito,
                         mPromoShownOneshotSupplier,
                         mLayoutSateProviderOneshotSupplier,
                         new ObservableSupplierImpl<>(),
-                        mTabModelSelectorSupplier);
+                        mTabModelSelectorSupplier,
+                        mTopUIThemeProvider,
+                        mIncognitoStateProvider,
+                        () -> mProfile);
+
         coordinator.initializeWithNative(
                 mOnClickListener,
                 mOnLongClickListener,
                 mTabCountSupplier,
-                mArchivedTabCountSupplier,
+                /* archivedTabCountSupplier= */ null,
+                mNotificationDotSupplier,
                 () -> {},
                 () -> {});
         return coordinator;
@@ -134,7 +169,7 @@ public class ToggleTabStackButtonCoordinatorTest {
     private void showOverviewMode() {
         mOverviewOpen = true;
         for (LayoutStateProvider.LayoutStateObserver observer : mLayoutStateObserverSet) {
-            observer.onStartedShowing(/* showToolbar= */ LayoutType.TAB_SWITCHER);
+            observer.onStartedShowing(/* layoutType= */ LayoutType.TAB_SWITCHER);
         }
         for (LayoutStateProvider.LayoutStateObserver observer : mLayoutStateObserverSet) {
             observer.onFinishedShowing(LayoutType.TAB_SWITCHER);
@@ -280,11 +315,11 @@ public class ToggleTabStackButtonCoordinatorTest {
         mLayoutSateProviderOneshotSupplier.set(mLayoutStateProvider);
         mPromoShownOneshotSupplier.set(false);
 
-        mIsIncognito = true;
+        when(mIncognitoStateProvider.isIncognitoSelected()).thenReturn(true);
         mCoordinator.handlePageLoadFinished();
         verifyIphNotShown();
 
-        mIsIncognito = false;
+        when(mIncognitoStateProvider.isIncognitoSelected()).thenReturn(false);
         mCoordinator.handlePageLoadFinished();
         IphCommand iphCommand = verifyIphShown();
         assertEquals(
@@ -301,8 +336,8 @@ public class ToggleTabStackButtonCoordinatorTest {
                 iphCommand.accessibilityStringId);
     }
 
-    @EnableFeatures(ChromeFeatureList.TAB_STRIP_INCOGNITO_MIGRATION)
     @Test
+    @EnableFeatures(ChromeFeatureList.TAB_STRIP_INCOGNITO_MIGRATION)
     public void testSwitchToIncognitoIphIsShown() {
         ToggleTabStackButtonCoordinator toggleTabStackButtonCoordinator =
                 newToggleTabStackButtonCoordinator(
@@ -310,12 +345,9 @@ public class ToggleTabStackButtonCoordinatorTest {
         mLayoutSateProviderOneshotSupplier.set(mLayoutStateProvider);
         mPromoShownOneshotSupplier.set(false);
 
-        when(mTabModelSelector.getCurrentModel()).thenReturn(mTabModel);
-        when(mTabModelSelector.getModel(true)).thenReturn(mTabModel);
-        when(mTabModel.getCount()).thenReturn(1);
+        when(mIncognitoTabModel.getCount()).thenReturn(1);
 
         // Standard model with incognito tabs - show switch into incognito IPH.
-        when(mTabModel.isIncognitoBranded()).thenReturn(false);
         toggleTabStackButtonCoordinator.handlePageLoadFinished();
         IphCommand iphCommand = verifyIphShown();
         assertEquals(
@@ -332,7 +364,7 @@ public class ToggleTabStackButtonCoordinatorTest {
                 iphCommand.accessibilityStringId);
 
         // Incognito model - show switch out of incognito IPH.
-        when(mTabModel.isIncognitoBranded()).thenReturn(true);
+        when(mTabModelSelector.getCurrentModel()).thenReturn(mIncognitoTabModel);
         toggleTabStackButtonCoordinator.handlePageLoadFinished();
         iphCommand = verifyIphShown();
         assertEquals(
@@ -385,15 +417,18 @@ public class ToggleTabStackButtonCoordinatorTest {
     }
 
     @Test
-    public void testSetBrandedColorScheme() {
-        mCoordinator.setBrandedColorScheme(BrandedColorScheme.DARK_BRANDED_THEME);
-        verify(mToggleTabStackButton).setBrandedColorScheme(BrandedColorScheme.DARK_BRANDED_THEME);
+    public void testDraw() {
+        Canvas canvas = new Canvas();
+        mCoordinator.draw(mToggleTabStackButton, canvas);
+        verify(mToggleTabStackButton).drawTabSwitcherAnimationOverlay(canvas);
     }
 
     @Test
-    public void testDrawTabSwitcherAnimationOverlay() {
-        Canvas canvas = new Canvas();
-        mCoordinator.drawTabSwitcherAnimationOverlay(mToggleTabStackButton, canvas, 255);
-        verify(mToggleTabStackButton).drawTabSwitcherAnimationOverlay(canvas, 255);
+    public void testTabModelDotInfoIph() {
+        String groupTitle = "Vacation";
+        mNotificationDotSupplier.set(new TabModelDotInfo(true, groupTitle));
+
+        IphCommand iphCommand = verifyIphShown();
+        assertTrue(iphCommand.contentString.contains(groupTitle));
     }
 }

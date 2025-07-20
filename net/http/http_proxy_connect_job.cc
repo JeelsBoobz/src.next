@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <set>
 #include <utility>
+#include <variant>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -27,6 +29,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/proxy_chain.h"
 #include "net/base/session_usage.h"
+#include "net/base/task/task_runner.h"
 #include "net/dns/public/secure_dns_policy.h"
 #include "net/log/net_log_source_type.h"
 #include "net/log/net_log_with_source.h"
@@ -48,7 +51,6 @@
 #include "net/spdy/spdy_session_pool.h"
 #include "net/spdy/spdy_stream.h"
 #include "net/ssl/ssl_cert_request_info.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "url/gurl.h"
 #include "url/scheme_host_port.h"
 
@@ -136,6 +138,14 @@ GURL MakeProxyUrl(const HttpProxySocketParams& params) {
               params.proxy_server().host_port_pair().ToString());
 }
 
+const scoped_refptr<base::SingleThreadTaskRunner>& TaskRunner(
+    net::RequestPriority priority) {
+  if (features::kNetTaskSchedulerHttpProxyConnectJob.Get()) {
+    return net::GetTaskRunner(priority);
+  }
+  return base::SingleThreadTaskRunner::GetCurrentDefault();
+}
+
 }  // namespace
 
 HttpProxySocketParams::HttpProxySocketParams(
@@ -206,11 +216,11 @@ HttpProxySocketParams::HttpProxySocketParams(
   // Only supports proxy endpoints without scheme for now.
   // TODO(crbug.com/40181080): Handle scheme.
   if (is_over_transport()) {
-    DCHECK(absl::holds_alternative<HostPortPair>(
+    DCHECK(std::holds_alternative<HostPortPair>(
         nested_params_->transport()->destination()));
   } else if (is_over_ssl() && nested_params_->ssl()->GetConnectionType() ==
                                   SSLSocketParams::ConnectionType::DIRECT) {
-    DCHECK(absl::holds_alternative<HostPortPair>(
+    DCHECK(std::holds_alternative<HostPortPair>(
         nested_params_->ssl()->GetDirectConnectionParams()->destination()));
   }
 }
@@ -331,6 +341,14 @@ void HttpProxyConnectJob::OnNeedsProxyAuth(
   NOTREACHED();
 }
 
+Error HttpProxyConnectJob::OnDestinationDnsAliasesResolved(
+    const std::set<std::string>& aliases,
+    ConnectJob* job) {
+  // Do nothing and return OK when DNS aliases for HTTP proxy hostnames since
+  // higher-level layers will not take action on these.
+  return OK;
+}
+
 base::TimeDelta HttpProxyConnectJob::AlternateNestedConnectionTimeout(
     const HttpProxySocketParams& params,
     const NetworkQualityEstimator* network_quality_estimator) {
@@ -397,9 +415,9 @@ void HttpProxyConnectJob::RestartWithAuthCredentials() {
 
   // Always do this asynchronously, to avoid re-entrancy.
   next_state_ = STATE_RESTART_WITH_AUTH;
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE, base::BindOnce(&HttpProxyConnectJob::OnIOComplete,
-                                weak_ptr_factory_.GetWeakPtr(), OK));
+  TaskRunner(priority())
+      ->PostTask(FROM_HERE, base::BindOnce(&HttpProxyConnectJob::OnIOComplete,
+                                           weak_ptr_factory_.GetWeakPtr(), OK));
 }
 
 int HttpProxyConnectJob::DoLoop(int result) {
@@ -590,7 +608,7 @@ int HttpProxyConnectJob::DoTransportConnectComplete(int result) {
 
   // Establish a tunnel over the proxy by making a CONNECT request. HTTP/1.1 and
   // HTTP/2 handle CONNECT differently.
-  if (next_proto == kProtoHTTP2) {
+  if (next_proto == NextProto::kProtoHTTP2) {
     DCHECK_EQ(ProxyServer::SCHEME_HTTPS, scheme);
     next_state_ = STATE_SPDY_PROXY_CREATE_STREAM;
   } else {
@@ -622,8 +640,9 @@ int HttpProxyConnectJob::DoHttpProxyConnect() {
 int HttpProxyConnectJob::DoHttpProxyConnectComplete(int result) {
   // Always inform caller of auth requests asynchronously.
   if (result == ERR_PROXY_AUTH_REQUESTED) {
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(&HttpProxyConnectJob::OnAuthChallenge,
+    TaskRunner(priority())
+        ->PostTask(FROM_HERE,
+                   base::BindOnce(&HttpProxyConnectJob::OnAuthChallenge,
                                   weak_ptr_factory_.GetWeakPtr()));
     return ERR_IO_PENDING;
   }
@@ -670,7 +689,8 @@ int HttpProxyConnectJob::DoSpdyProxyCreateStream() {
         common_connect_job_params()
             ->spdy_session_pool->CreateAvailableSessionFromSocket(
                 key, nested_connect_job_->PassSocket(),
-                nested_connect_job_->connect_timing(), net_log());
+                nested_connect_job_->connect_timing(), net_log(),
+                SpdySessionInitiator::kHttpProxyConnectJob);
     nested_connect_job_.reset();
     if (!spdy_session_result.has_value()) {
       return spdy_session_result.error();
@@ -758,6 +778,7 @@ int HttpProxyConnectJob::DoQuicProxyCreateSession() {
       /*require_dns_https_alpn=*/false, ssl_config.GetCertVerifyFlags(),
       GURL("https://" + proxy_server.ToString()), net_log(),
       &quic_net_error_details_, MultiplexedSessionCreationInitiator::kUnknown,
+      /*management_config=*/std::nullopt,
       /*failed_on_default_network_callback=*/CompletionOnceCallback(),
       base::BindOnce(&HttpProxyConnectJob::OnIOComplete,
                      base::Unretained(this)));
@@ -932,15 +953,15 @@ void HttpProxyConnectJob::EmitConnectLatency(NextProto http_version,
                                              base::TimeDelta latency) {
   std::string_view http_version_piece;
   switch (http_version) {
-    case kProtoUnknown:
+    case NextProto::kProtoUnknown:
     // fall through to assume Http1
-    case kProtoHTTP11:
+    case NextProto::kProtoHTTP11:
       http_version_piece = "Http1";
       break;
-    case kProtoHTTP2:
+    case NextProto::kProtoHTTP2:
       http_version_piece = "Http2";
       break;
-    case kProtoQUIC:
+    case NextProto::kProtoQUIC:
       http_version_piece = "Http3";
       break;
     default:

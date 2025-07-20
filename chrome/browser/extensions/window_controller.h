@@ -17,9 +17,13 @@
 #include "chrome/common/extensions/api/windows.h"
 #include "extensions/common/mojom/context_type.mojom-forward.h"
 
-class Browser;  // TODO(stevenjb) eliminate this dependency.
+class BrowserWindowInterface;
 class GURL;
 class Profile;
+
+#if !BUILDFLAG(IS_ANDROID)
+class Browser;  // TODO(stevenjb) eliminate this dependency.
+#endif
 
 namespace content {
 class WebContents;
@@ -50,7 +54,7 @@ class WindowController {
     REASON_NOT_EDITABLE,
   };
 
-  // A bitmaks used as filter on window types.
+  // A bitmask used as filter on window types.
   using TypeFilter = uint32_t;
 
   // Represents the lack of any window filter, implying
@@ -84,18 +88,24 @@ class WindowController {
   // TODO(devlin): Remove this in favor of the method on ExtensionTabUtil.
   virtual std::string GetWindowTypeText() const = 0;
 
-  // Sets the window's fullscreen state. |extension_url| provides the url
+  // Sets the window's fullscreen state. `extension_url` provides the url
   // associated with the extension (used by FullscreenController).
   virtual void SetFullscreenMode(bool is_fullscreen,
                                  const GURL& extension_url) const = 0;
 
   // Returns false if the window is in a state where closing the window is not
-  // permitted and sets |reason| if not NULL.
+  // permitted and sets `reason` if not NULL.
   virtual bool CanClose(Reason* reason) const = 0;
 
+  // Returns the BrowserWindowInterface associated with this window controller,
+  // if any. Defaults to returning null.
+  virtual BrowserWindowInterface* GetBrowserWindowInterface();
+
+#if !BUILDFLAG(IS_ANDROID)
   // Returns a Browser if available. Defaults to returning NULL.
   // TODO(stevenjb): Temporary workaround. Eliminate this.
   virtual Browser* GetBrowser() const;
+#endif
 
   // Returns true if the window is in the process of being torn down. See
   // Browser::is_delete_scheduled().
@@ -125,15 +135,15 @@ class WindowController {
   virtual content::WebContents* GetWebContentsAt(int i) const = 0;
 
   // Returns true if the window is visible to the tabs API, when used by the
-  // given |extension|.
-  // |allow_dev_tools_windows| indicates whether dev tools windows should be
+  // given `extension`.
+  // `allow_dev_tools_windows` indicates whether dev tools windows should be
   // treated as visible.
   // TODO(devlin): Remove include_dev_tools_windows.
   virtual bool IsVisibleToTabsAPIForExtension(
       const Extension* extension,
       bool include_dev_tools_windows) const = 0;
 
-  // Returns true if the window type of the controller matches the |filter|.
+  // Returns true if the window type of the controller matches the `filter`.
   bool MatchesFilter(TypeFilter filter) const;
 
   // Notifies that a window's bounds are changed.
@@ -155,14 +165,19 @@ class WindowController {
   virtual base::Value::List CreateTabList(const Extension* extension,
                                           mojom::ContextType context) const = 0;
 
-  // Open the extension's options page. Returns true if an options page was
-  // successfully opened (though it may not necessarily *load*, e.g. if the
-  // URL does not exist).
-  virtual bool OpenOptionsPage(const Extension* extension) = 0;
+  // Open the extension's options page as instructed. Returns true if an options
+  // page was successfully opened (though it may not necessarily *load*, e.g. if
+  // the URL does not exist).
+  virtual bool OpenOptionsPage(const Extension* extension,
+                               const GURL& url,
+                               bool open_in_tab) = 0;
 
   // Returns true if the Browser can report tabs to extensions. Example of
   // Browsers which don't support tabs include apps and devtools.
   virtual bool SupportsTabs() = 0;
+
+  ui::BaseWindow* window() { return window_.get(); }
+  Profile* profile() { return profile_.get(); }
 
  private:
   raw_ptr<ui::BaseWindow, DanglingUntriaged> window_;

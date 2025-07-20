@@ -8,6 +8,8 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.cc.input.OffsetTag;
 import org.chromium.chrome.browser.layouts.scene_layer.SceneLayer;
 import org.chromium.chrome.browser.layouts.scene_layer.SceneOverlayLayer;
@@ -18,6 +20,7 @@ import org.chromium.ui.resources.ResourceManager;
 
 /** A SceneLayer to render the top toolbar. This is the "view" piece of the top toolbar overlay. */
 @JNINamespace("android")
+@NullMarked
 class TopToolbarSceneLayer extends SceneOverlayLayer {
     /** Pointer to native TopToolbarSceneLayer. */
     private long mNativePtr;
@@ -43,7 +46,6 @@ class TopToolbarSceneLayer extends SceneOverlayLayer {
         TopToolbarSceneLayerJni.get()
                 .updateToolbarLayer(
                         mNativePtr,
-                        TopToolbarSceneLayer.this,
                         mResourceManagerSupplier.get(),
                         model.get(TopToolbarOverlayProperties.RESOURCE_ID),
                         model.get(TopToolbarOverlayProperties.TOOLBAR_BACKGROUND_COLOR),
@@ -62,7 +64,6 @@ class TopToolbarSceneLayer extends SceneOverlayLayer {
         TopToolbarSceneLayerJni.get()
                 .updateProgressBar(
                         mNativePtr,
-                        TopToolbarSceneLayer.this,
                         progressInfo.progressBarRect.left,
                         progressInfo.progressBarRect.top,
                         progressInfo.progressBarRect.width(),
@@ -72,19 +73,27 @@ class TopToolbarSceneLayer extends SceneOverlayLayer {
                         progressInfo.progressBarBackgroundRect.top,
                         progressInfo.progressBarBackgroundRect.width(),
                         progressInfo.progressBarBackgroundRect.height(),
-                        progressInfo.progressBarBackgroundColor);
+                        progressInfo.progressBarBackgroundColor,
+                        progressInfo.progressBarStaticBackgroundRect.left,
+                        progressInfo.progressBarStaticBackgroundRect.width(),
+                        progressInfo.progressBarStaticBackgroundColor,
+                        progressInfo.progressBarEndIndicator.left,
+                        progressInfo.progressBarEndIndicator.top,
+                        progressInfo.progressBarEndIndicator.width(),
+                        progressInfo.progressBarEndIndicator.height(),
+                        progressInfo.cornerRadius,
+                        progressInfo.progressBarVisualUpdateAvailable);
     }
 
     @Override
     public void setContentTree(SceneLayer contentTree) {
-        TopToolbarSceneLayerJni.get()
-                .setContentTree(mNativePtr, TopToolbarSceneLayer.this, contentTree);
+        TopToolbarSceneLayerJni.get().setContentTree(mNativePtr, contentTree);
     }
 
     @Override
     protected void initializeNative() {
         if (mNativePtr == 0) {
-            mNativePtr = TopToolbarSceneLayerJni.get().init(TopToolbarSceneLayer.this);
+            mNativePtr = TopToolbarSceneLayerJni.get().init(this);
         }
         assert mNativePtr != 0;
     }
@@ -97,16 +106,12 @@ class TopToolbarSceneLayer extends SceneOverlayLayer {
 
     @NativeMethods
     interface Natives {
-        long init(TopToolbarSceneLayer caller);
+        long init(TopToolbarSceneLayer self);
 
-        void setContentTree(
-                long nativeTopToolbarSceneLayer,
-                TopToolbarSceneLayer caller,
-                SceneLayer contentTree);
+        void setContentTree(long nativeTopToolbarSceneLayer, SceneLayer contentTree);
 
         void updateToolbarLayer(
                 long nativeTopToolbarSceneLayer,
-                TopToolbarSceneLayer caller,
                 ResourceManager resourceManager,
                 int resourceId,
                 int toolbarBackgroundColor,
@@ -117,11 +122,10 @@ class TopToolbarSceneLayer extends SceneOverlayLayer {
                 boolean showShadow,
                 boolean visible,
                 boolean anonymize,
-                OffsetTag offsetTag);
+                @Nullable OffsetTag offsetTag);
 
         void updateProgressBar(
                 long nativeTopToolbarSceneLayer,
-                TopToolbarSceneLayer caller,
                 int progressBarX,
                 int progressBarY,
                 int progressBarWidth,
@@ -131,6 +135,15 @@ class TopToolbarSceneLayer extends SceneOverlayLayer {
                 int progressBarBackgroundY,
                 int progressBarBackgroundWidth,
                 int progressBarBackgroundHeight,
-                int progressBarBackgroundColor);
+                int progressBarBackgroundColor,
+                int progressBarStaticBackgroundX,
+                int progressBarStaticBackgroundWidth,
+                int progressBarStaticBackgroundColor,
+                int progressBarEndIndicatorX,
+                int progressBarEndIndicatorY,
+                int progressBarEndIndicatorWidth,
+                int progressBarEndIndicatorHeight,
+                float cornerRadius,
+                boolean progressBarVisualUpdateAvailable);
     }
 }

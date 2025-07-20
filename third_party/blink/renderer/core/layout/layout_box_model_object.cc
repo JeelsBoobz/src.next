@@ -26,7 +26,6 @@
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
 
 #include "cc/input/main_thread_scrolling_reason.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/editing/ime/input_method_controller.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -53,6 +52,7 @@
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/style/shadow_list.h"
 #include "third_party/blink/renderer/platform/geometry/length_functions.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -66,8 +66,9 @@ void MarkBoxForRelayoutAfterSplit(LayoutBoxModelObject* box) {
 void CollapseLoneAnonymousBlockChild(LayoutBox* parent, LayoutObject* child) {
   auto* child_block_flow = DynamicTo<LayoutBlockFlow>(child);
   auto* parent_block_flow = DynamicTo<LayoutBlockFlow>(parent);
-  if (!child->IsAnonymousBlock() || !child_block_flow)
+  if (!child->IsAnonymousBlockFlow() || !child_block_flow) {
     return;
+  }
   if (!parent_block_flow)
     return;
   parent_block_flow->CollapseAnonymousBlockChild(child_block_flow);
@@ -124,8 +125,8 @@ void LayoutBoxModelObject::StyleWillChange(StyleDifference diff,
                                            const ComputedStyle& new_style) {
   NOT_DESTROYED();
   // Change of stacked/stacking context status may cause change of this or
-  // descendant PaintLayer's CompositingContainer, so we need to eagerly
-  // invalidate the current compositing container chain which may have painted
+  // descendant PaintLayer's PaintingContainer, so we need to eagerly
+  // invalidate the current PaintingContainer chain which may have painted
   // cached subsequences containing this object or descendant objects.
   if (Style() &&
       (IsStacked() != IsStacked(new_style) ||
@@ -135,7 +136,7 @@ void LayoutBoxModelObject::StyleWillChange(StyleDifference diff,
     ObjectPaintInvalidator(*this).SlowSetPaintingLayerNeedsRepaint();
   }
 
-  if (Style()) {
+  if (!RuntimeEnabledFeatures::FlowThreadLessEnabled() && Style()) {
     LayoutFlowThread* flow_thread = FlowThreadContainingBlock();
     if (flow_thread && flow_thread != this) {
       flow_thread->FlowThreadDescendantStyleWillChange(this, diff, new_style);
@@ -234,9 +235,12 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
   }
 
   if (old_style && Parent()) {
-    if (LayoutFlowThread* flow_thread = FlowThreadContainingBlock()) {
-      if (flow_thread != this) {
-        flow_thread->FlowThreadDescendantStyleDidChange(this, diff, *old_style);
+    if (!RuntimeEnabledFeatures::FlowThreadLessEnabled()) {
+      if (LayoutFlowThread* flow_thread = FlowThreadContainingBlock()) {
+        if (flow_thread != this) {
+          flow_thread->FlowThreadDescendantStyleDidChange(this, diff,
+                                                          *old_style);
+        }
       }
     }
 
@@ -266,10 +270,10 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
   }
 
   if (Layer()) {
-    // The previous CompositingContainer chain was marked for repaint via
+    // The previous PaintingContainer chain was marked for repaint via
     // |LayoutBoxModelObject::StyleWillChange| but changes to stacking can
-    // change the compositing container so we need to ensure the new
-    // CompositingContainer is also marked for repaint.
+    // change the PaintingContainer so we need to ensure the new
+    // PaintingContainer is also marked for repaint.
     if (old_style &&
         (IsStacked() != IsStacked(*old_style) ||
          IsStackingContext() != IsStackingContext(*old_style)) &&
@@ -348,6 +352,18 @@ void LayoutBoxModelObject::DestroyLayer() {
   SetNeedsPaintPropertyUpdate();
 }
 
+LayoutUnit LayoutBoxModelObject::OffsetWidth() const {
+  NOT_DESTROYED();
+  DCHECK(RuntimeEnabledFeatures::LayoutBoxVisualLocationEnabled());
+  return BoundingBoxRelativeToFirstFragment().size.width;
+}
+
+LayoutUnit LayoutBoxModelObject::OffsetHeight() const {
+  NOT_DESTROYED();
+  DCHECK(RuntimeEnabledFeatures::LayoutBoxVisualLocationEnabled());
+  return BoundingBoxRelativeToFirstFragment().size.height;
+}
+
 bool LayoutBoxModelObject::HasSelfPaintingLayer() const {
   NOT_DESTROYED();
   return Layer() && Layer()->IsSelfPaintingLayer();
@@ -421,6 +437,7 @@ void LayoutBoxModelObject::AddOutlineRectsForDescendant(
 }
 
 void LayoutBoxModelObject::RecalcVisualOverflow() {
+  NOT_DESTROYED();
   // |PaintLayer| calls this function when |HasSelfPaintingLayer|. When |this|
   // is an inline box or an atomic inline, its ink overflow is stored in
   // |FragmentItem| in the inline formatting context.
@@ -441,6 +458,7 @@ void LayoutBoxModelObject::RecalcVisualOverflow() {
 
 bool LayoutBoxModelObject::ShouldBeHandledAsInline(
     const ComputedStyle& style) const {
+  NOT_DESTROYED();
   if (style.IsDisplayInlineType()) {
     return true;
   }
@@ -454,14 +472,16 @@ bool LayoutBoxModelObject::ShouldBeHandledAsInline(
 
 void LayoutBoxModelObject::UpdateFromStyle() {
   NOT_DESTROYED();
-  const ComputedStyle& style_to_use = StyleRef();
-  SetHasBoxDecorationBackground(style_to_use.HasBoxDecorationBackground());
-  SetInline(ShouldBeHandledAsInline(style_to_use));
-  SetPositionState(style_to_use.GetPosition());
-  SetHorizontalWritingMode(style_to_use.IsHorizontalWritingMode());
+  const ComputedStyle& style = StyleRef();
+  SetHasBoxDecorationBackground(style.HasBoxDecorationBackground());
+  SetInline(ShouldBeHandledAsInline(style));
+  SetPositionState(ToPositionedState(style.GetPosition()));
+  SetHorizontalWritingMode(style.IsHorizontalWritingMode());
+
+  const bool is_fixed_container = ComputeIsFixedContainer(style);
+  SetCanContainFixedPositionObjects(is_fixed_container);
   SetCanContainAbsolutePositionObjects(
-      ComputeIsAbsoluteContainer(&style_to_use));
-  SetCanContainFixedPositionObjects(ComputeIsFixedContainer(&style_to_use));
+      ComputeIsAbsoluteContainer(style, is_fixed_container));
   SetIsBackgroundAttachmentFixedObject(
       !BackgroundTransfersToView() &&
       StyleRef().HasFixedAttachmentBackgroundImage());
@@ -469,6 +489,7 @@ void LayoutBoxModelObject::UpdateFromStyle() {
 
 void LayoutBoxModelObject::UpdateCanCompositeBackgroundAttachmentFixed(
     bool enable_composited_background_attachment_fixed) {
+  NOT_DESTROYED();
   SetCanCompositeBackgroundAttachmentFixed(
       enable_composited_background_attachment_fixed &&
       ComputeCanCompositeBackgroundAttachmentFixed());
@@ -505,6 +526,7 @@ PhysicalRect LayoutBoxModelObject::ApplyFiltersToRect(
 }
 
 LayoutBlock* LayoutBoxModelObject::StickyContainer() const {
+  NOT_DESTROYED();
   return ContainingBlock();
 }
 
@@ -537,8 +559,9 @@ LayoutBoxModelObject::ComputeStickyPositionConstraints() const {
   const PhysicalOffset scroll_container_border_offset(
       scroll_container->BorderLeft(), scroll_container->BorderTop());
 
-  MapCoordinatesFlags flags =
-      kIgnoreTransforms | kIgnoreScrollOffset | kIgnoreStickyOffset;
+  MapCoordinatesFlags flags = kIgnoreTransforms | kIgnoreScrollOffset |
+                              kIgnoreStickyOffset |
+                              kIgnoreScrollOriginAndOffset;
 
   // Compute the sticky-container rect.
   {
@@ -679,6 +702,17 @@ PhysicalOffset LayoutBoxModelObject::StickyPositionOffset() const {
   return constraints ? constraints->StickyOffset() : PhysicalOffset();
 }
 
+PhysicalOffset LayoutBoxModelObject::OffsetFromContainerInternal(
+    const LayoutObject* container,
+    MapCoordinatesFlags mode) const {
+  NOT_DESTROYED();
+  PhysicalOffset offset;
+  if (IsStickyPositioned() && !(mode & kIgnoreStickyOffset)) {
+    offset += StickyPositionOffset();
+  }
+  return offset + LayoutObject::OffsetFromContainerInternal(container, mode);
+}
+
 PhysicalOffset LayoutBoxModelObject::AdjustedPositionRelativeTo(
     const PhysicalOffset& start_point,
     const Element* offset_parent) const {
@@ -711,7 +745,9 @@ PhysicalOffset LayoutBoxModelObject::AdjustedPositionRelativeTo(
            current && current->GetNode() != offset_parent;
            current = current->Container()) {
         // FIXME: What are we supposed to do inside SVG content?
-        reference_point += current->ColumnOffset(reference_point);
+        if (!RuntimeEnabledFeatures::LayoutBoxVisualLocationEnabled()) {
+          reference_point += current->ColumnOffset(reference_point);
+        }
         if (current->IsBox()) {
           reference_point += To<LayoutBox>(current)->PhysicalLocation();
         }
@@ -743,20 +779,6 @@ PhysicalOffset LayoutBoxModelObject::AdjustedPositionRelativeTo(
   return reference_point;
 }
 
-LayoutUnit LayoutBoxModelObject::OffsetLeft(const Element* parent) const {
-  NOT_DESTROYED();
-  // Note that LayoutInline and LayoutBox override this to pass a different
-  // startPoint to adjustedPositionRelativeTo.
-  return AdjustedPositionRelativeTo(PhysicalOffset(), parent).left;
-}
-
-LayoutUnit LayoutBoxModelObject::OffsetTop(const Element* parent) const {
-  NOT_DESTROYED();
-  // Note that LayoutInline and LayoutBox override this to pass a different
-  // startPoint to adjustedPositionRelativeTo.
-  return AdjustedPositionRelativeTo(PhysicalOffset(), parent).top;
-}
-
 LayoutUnit LayoutBoxModelObject::ComputedCSSPadding(
     const Length& padding) const {
   NOT_DESTROYED();
@@ -774,7 +796,8 @@ LayoutUnit LayoutBoxModelObject::ContainingBlockLogicalWidthForContent() const {
 
 LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
     LayoutUnit width,
-    LayoutUnit text_indent_offset) const {
+    LayoutUnit text_indent_offset,
+    CaretShape caret_shape) const {
   NOT_DESTROYED();
   DCHECK(!SlowFirstChild() || SlowFirstChild()->IsPseudoElement());
 
@@ -819,7 +842,7 @@ LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
               {current_style.GetWritingMode(), TextDirection::kLtr});
   x = border_padding.inline_start;
   max_x = width - border_padding.inline_end;
-  LayoutUnit caret_width = GetFrameView()->CaretWidth();
+  LayoutUnit caret_width = GetFrameView()->BarCaretWidth();
 
   switch (alignment) {
     case kAlignLeft:
@@ -841,8 +864,8 @@ LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
   }
   x = std::min(x, (max_x - caret_width).ClampNegativeToZero());
 
-  const Font& font = StyleRef().GetFont();
-  const SimpleFontData* font_data = font.PrimaryFont();
+  const Font* font = StyleRef().GetFont();
+  const SimpleFontData* font_data = font->PrimaryFont();
   LayoutUnit height;
   // crbug.com/595692 This check should not be needed but sometimes
   // primaryFont is null.
@@ -850,6 +873,17 @@ LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
     height = LayoutUnit(font_data->GetFontMetrics().Height());
   LayoutUnit vertical_space = FirstLineHeight() - height;
   LayoutUnit block_start = border_padding.block_start + (vertical_space / 2);
+  if (caret_shape != CaretShape::kBar && font_data) [[unlikely]] {
+    if (caret_shape == CaretShape::kBlock) {
+      caret_width = LayoutUnit(font_data->AvgCharWidth());
+    } else if (caret_shape == CaretShape::kUnderscore) {
+      height = caret_width;
+      caret_width = LayoutUnit(font_data->AvgCharWidth());
+      block_start =
+          block_start + LayoutUnit(font_data->GetFontMetrics().Height());
+    }
+  }
+
   return LogicalRect(x, block_start, caret_width, height);
 }
 

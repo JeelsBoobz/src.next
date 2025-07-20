@@ -4,16 +4,19 @@
 
 package org.chromium.chrome.browser.gesturenav;
 
-import android.graphics.Insets;
-import android.os.Build;
-import android.view.ViewGroup;
+import static org.chromium.build.NullUtil.assumeNonNull;
 
-import androidx.annotation.Nullable;
+import android.view.ViewGroup;
 
 import org.chromium.base.BuildInfo;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.Supplier;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.build.annotations.EnsuresNonNull;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.NullUnmarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.fullscreen.FullscreenOptions;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
@@ -21,38 +24,41 @@ import org.chromium.chrome.browser.lifecycle.PauseResumeWithNativeObserver;
 import org.chromium.chrome.browser.tab.CurrentTabObserver;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.components.browser_ui.widget.TouchEventObserver;
 import org.chromium.components.browser_ui.widget.TouchEventProvider;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.ui.InsetObserver;
+import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.BackGestureEventSwipeEdge;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 /** Coordinator object for gesture navigation. */
+@NullMarked
 public class HistoryNavigationCoordinator
         implements InsetObserver.WindowInsetObserver, PauseResumeWithNativeObserver {
     private final Runnable mUpdateNavigationStateRunnable = this::onNavigationStateChanged;
 
+    private WindowAndroid mWindow;
     private ViewGroup mParentView;
     private HistoryNavigationLayout mNavigationLayout;
     private InsetObserver mInsetObserver;
     private CurrentTabObserver mCurrentTabObserver;
     private ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
     private BackActionDelegate mBackActionDelegate;
-    private Tab mTab;
-    @Nullable private FullscreenManager mFullscreenManager;
-    @Nullable private FullscreenManager.Observer mFullscreenObserver;
+    private @Nullable Tab mTab;
+    private @Nullable FullscreenManager mFullscreenManager;
+    private FullscreenManager.@Nullable Observer mFullscreenObserver;
     private boolean mEnabled;
-    private boolean mIsAutomotiveFullscreenImprovementsEnabled;
     private boolean mIsFullscreen;
 
-    private NavigationHandler mNavigationHandler;
+    private @MonotonicNonNull NavigationHandler mNavigationHandler;
 
     private Supplier<TouchEventProvider> mTouchEventProvider;
 
-    private boolean mForceFeatureEnabledForTesting;
+    private @Nullable Boolean mForceFeatureEnabledForTesting;
 
     /**
      * Creates the coordinator for gesture navigation and initializes internal objects.
@@ -73,13 +79,14 @@ public class HistoryNavigationCoordinator
             ActivityLifecycleDispatcher lifecycleDispatcher,
             ViewGroup parentView,
             Runnable requestRunnable,
-            ObservableSupplier<Tab> tabSupplier,
+            ObservableSupplier<@Nullable Tab> tabSupplier,
             InsetObserver insetObserver,
             BackActionDelegate backActionDelegate,
             Supplier<TouchEventProvider> touchEventProvider,
             FullscreenManager fullscreenManager) {
         HistoryNavigationCoordinator coordinator = new HistoryNavigationCoordinator();
         coordinator.init(
+                window,
                 lifecycleDispatcher,
                 parentView,
                 tabSupplier,
@@ -91,19 +98,26 @@ public class HistoryNavigationCoordinator
     }
 
     /** Initializes the navigation layout and internal objects. */
+    @Initializer
     private void init(
+            WindowAndroid window,
             ActivityLifecycleDispatcher lifecycleDispatcher,
             ViewGroup parentView,
-            ObservableSupplier<Tab> tabSupplier,
+            ObservableSupplier<@Nullable Tab> tabSupplier,
             InsetObserver insetObserver,
             BackActionDelegate backActionDelegate,
             Supplier<TouchEventProvider> touchEventProvider,
             FullscreenManager fullscreenManager) {
+        mForceFeatureEnabledForTesting = null;
         mNavigationLayout =
                 new HistoryNavigationLayout(
                         parentView.getContext(),
-                        (direction) -> mNavigationHandler.navigate(direction));
+                        direction -> {
+                            assumeNonNull(mNavigationHandler);
+                            mNavigationHandler.navigate(direction);
+                        });
 
+        mWindow = window;
         mParentView = parentView;
         mActivityLifecycleDispatcher = lifecycleDispatcher;
         mBackActionDelegate = backActionDelegate;
@@ -120,18 +134,18 @@ public class HistoryNavigationCoordinator
                         new EmptyTabObserver() {
                             @Override
                             public void onContentChanged(Tab tab) {
-                                updateNavigationHandler();
+                                notifyNavigationState();
                             }
 
                             @Override
                             public void onDestroyed(Tab tab) {
                                 mTab = null;
-                                updateNavigationHandler();
+                                notifyNavigationState();
                             }
                         },
                         (tab) -> {
                             mTab = tab;
-                            updateNavigationHandler();
+                            notifyNavigationState();
                         });
         // We wouldn't hear about the first tab until the content changed or we switched tabs
         // if tabProvider.get() != null. Do here what we do when tab switching happens.
@@ -144,22 +158,15 @@ public class HistoryNavigationCoordinator
             mEnabled = isFeatureEnabled();
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            mInsetObserver = insetObserver;
-            insetObserver.addObserver(this);
-        }
-
-        mIsAutomotiveFullscreenImprovementsEnabled =
-                BuildInfo.getInstance().isAutomotive
-                        && ChromeFeatureList.isEnabled(
-                                ChromeFeatureList.AUTOMOTIVE_FULLSCREEN_TOOLBAR_IMPROVEMENTS);
-        if (mIsAutomotiveFullscreenImprovementsEnabled) {
+        mInsetObserver = insetObserver;
+        insetObserver.addObserver(this);
+        if (BuildInfo.getInstance().isAutomotive) {
             mFullscreenObserver =
                     new FullscreenManager.Observer() {
                         @Override
                         public void onEnterFullscreen(Tab tab, FullscreenOptions options) {
                             mIsFullscreen = true;
-                            if (mTouchEventProvider.get() != null) {
+                            if (mTouchEventProvider.get() != null && mNavigationHandler != null) {
                                 mTouchEventProvider
                                         .get()
                                         .removeTouchEventObserver(mNavigationHandler);
@@ -169,7 +176,7 @@ public class HistoryNavigationCoordinator
                         @Override
                         public void onExitFullscreen(Tab tab) {
                             mIsFullscreen = false;
-                            if (mTouchEventProvider.get() != null) {
+                            if (mTouchEventProvider.get() != null && mNavigationHandler != null) {
                                 mTouchEventProvider.get().addTouchEventObserver(mNavigationHandler);
                             }
                         }
@@ -187,7 +194,7 @@ public class HistoryNavigationCoordinator
         return mNavigationHandler;
     }
 
-    private static boolean isDetached(Tab tab) {
+    private static boolean isDetached(@Nullable Tab tab) {
         return tab == null
                 || tab.getWebContents() == null
                 || tab.getWebContents().getTopLevelNativeWindow() == null;
@@ -197,26 +204,23 @@ public class HistoryNavigationCoordinator
      * @return {@code} true if the feature is enabled.
      */
     private boolean isFeatureEnabled() {
-        if (mForceFeatureEnabledForTesting) {
-            return true;
+        if (mForceFeatureEnabledForTesting != null) {
+            return mForceFeatureEnabledForTesting;
         }
 
-        if (mIsAutomotiveFullscreenImprovementsEnabled && mIsFullscreen) {
+        if (BuildInfo.getInstance().isAutomotive && mIsFullscreen) {
             return false;
         }
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return true;
-        } else {
-            // Preserve the previous enabled status if queried when the view is in detached state.
-            if (mParentView == null || !mParentView.isAttachedToWindow()) return mEnabled;
-            Insets insets = mParentView.getRootWindowInsets().getSystemGestureInsets();
-            return insets.left == 0 && insets.right == 0;
+        // Preserve the previous enabled status if queried when there is no Window.
+        if (mWindow.getWindow() == null) {
+            return mEnabled;
         }
+        return !UiUtils.isGestureNavigationMode(mWindow.getWindow());
     }
 
     @Override
-    public void onInsetChanged(int left, int top, int right, int bottom) {
+    public void onInsetChanged() {
         onNavigationStateChanged();
     }
 
@@ -227,11 +231,20 @@ public class HistoryNavigationCoordinator
     private void onNavigationStateChanged() {
         boolean oldEnabled = mEnabled;
         mEnabled = isFeatureEnabled();
-        if (mEnabled != oldEnabled) updateNavigationHandler();
+        if (mEnabled != oldEnabled) notifyNavigationState();
     }
 
-    /** Initialize or reset {@link NavigationHandler} using the enabled state. */
-    private void updateNavigationHandler() {
+    /**
+     * Notify the webcontents about whether the navigation mode supports forward transitions and
+     * initialize or reset {@link NavigationHandler} using the enabled state.
+     */
+    private void notifyNavigationState() {
+        WebContents webContents = mTab != null ? mTab.getWebContents() : null;
+        if (webContents != null) {
+            webContents.setSupportsForwardTransitionAnimation(
+                    mEnabled || ToolbarManager.isRightEdgeGoesForwardGestureNavEnabled());
+        }
+
         // Check against |mActivityLifecycleDisptacher|/|mTouchEventProvider| prevents the flow
         // after the destruction.
         if (!mEnabled
@@ -239,8 +252,6 @@ public class HistoryNavigationCoordinator
                 || mTouchEventProvider.get() == null) {
             return;
         }
-
-        WebContents webContents = mTab != null ? mTab.getWebContents() : null;
 
         // Also updates NavigationHandler when tab == null (going into TabSwitcher).
         if (mTab == null || webContents != null) {
@@ -250,6 +261,7 @@ public class HistoryNavigationCoordinator
     }
 
     /** Initialize {@link NavigationHandler} object. */
+    @EnsuresNonNull("mNavigationHandler")
     private void initNavigationHandler() {
         PropertyModel model =
                 new PropertyModel.Builder(GestureNavigationProperties.ALL_KEYS).build();
@@ -322,6 +334,7 @@ public class HistoryNavigationCoordinator
     }
 
     /** Destroy HistoryNavigationCoordinator object. */
+    @SuppressWarnings("NullAway")
     public void destroy() {
         if (mCurrentTabObserver != null) {
             mCurrentTabObserver.destroy();
@@ -352,6 +365,7 @@ public class HistoryNavigationCoordinator
         }
     }
 
+    @NullUnmarked
     NavigationHandler getNavigationHandlerForTesting() {
         return mNavigationHandler;
     }
@@ -360,8 +374,8 @@ public class HistoryNavigationCoordinator
         return mNavigationLayout;
     }
 
-    void forceFeatureEnabledForTesting() {
-        mForceFeatureEnabledForTesting = true;
+    void forceFeatureEnabledForTesting(boolean enable) {
+        mForceFeatureEnabledForTesting = enable;
         onNavigationStateChanged();
     }
 }

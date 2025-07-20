@@ -10,6 +10,7 @@
 
 #include "base/check_op.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/uuid.h"
 #include "content/public/browser/browser_thread.h"
@@ -170,7 +171,7 @@ content::RenderFrameHost* ExtensionApiFrameIdMap::GetRenderFrameHostByFrameId(
   CHECK_GE(frame_id, 1);
 
   content::RenderFrameHost* render_frame_host = nullptr;
-  for (auto iter : document_id_map_) {
+  for (const auto& iter : document_id_map_) {
     if (frame_id ==
         ExtensionApiFrameIdMap::GetFrameId(&iter.second->render_frame_host())) {
       render_frame_host = &iter.second->render_frame_host();

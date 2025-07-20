@@ -92,14 +92,17 @@ enum ViewID {
   // Docked dev tools.
   VIEW_ID_DEV_TOOLS_DOCKED,
 
+  // Lens overlay.
+  VIEW_ID_LENS_OVERLAY,
+
+  // Glic Actor Overlay
+  VIEW_ID_ACTOR_OVERLAY,
+
   // The contents split.
   VIEW_ID_CONTENTS_SPLIT,
 
   // The Infobar container.
   VIEW_ID_INFO_BAR_CONTAINER,
-
-  // The Download shelf.
-  VIEW_ID_DOWNLOAD_SHELF,
 
   // The header in the App Identity Update dialog.
   VIEW_ID_APP_IDENTITY_UPDATE_HEADER,
@@ -110,6 +113,9 @@ enum ViewID {
 
   // Plus button on location bar.
   VIEW_ID_ACTION_BOX_BUTTON,
+
+  // Media Picker screen scroll view.
+  VIEW_ID_MEDIA_PICKER_SCREEN_SCROLL_VIEW,
 };
 
 #endif  // CHROME_BROWSER_UI_VIEW_IDS_H_

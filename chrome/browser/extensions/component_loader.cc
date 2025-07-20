@@ -14,7 +14,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
-#include "base/json/json_string_value_serializer.h"
+#include "base/json/json_reader.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/time/time.h"
@@ -24,9 +24,8 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/component_extensions_allowlist/allowlist.h"
+#include "chrome/browser/extensions/component_loader_factory.h"
 #include "chrome/browser/extensions/data_deleter.h"
-#include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/extensions/profile_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/channel_info.h"
@@ -37,12 +36,12 @@
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/crx_file/id_util.h"
-#include "components/nacl/common/buildflags.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/common/constants.h"
@@ -54,6 +53,7 @@
 #include "extensions/common/manifest_constants.h"
 #include "pdf/buildflags.h"
 #include "printing/buildflags/buildflags.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -63,19 +63,14 @@
 #include "ash/constants/ash_switches.h"
 #include "ash/keyboard/ui/grit/keyboard_resources.h"
 #include "base/system/sys_info.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/storage_partition.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/switches.h"
 #include "storage/browser/file_system/file_system_context.h"
-#include "ui/accessibility/accessibility_features.h"
 #include "ui/file_manager/grit/file_manager_resources.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS)
-#include "chromeos/constants/chromeos_features.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PDF)
@@ -185,13 +180,22 @@ ComponentLoader::ComponentExtensionInfo::operator=(
 
 ComponentLoader::ComponentExtensionInfo::~ComponentExtensionInfo() = default;
 
-ComponentLoader::ComponentLoader(ExtensionSystem* extension_system,
-                                 Profile* profile)
+// static
+ComponentLoader* ComponentLoader::Get(content::BrowserContext* context) {
+  return ComponentLoaderFactory::GetForBrowserContext(context);
+}
+
+ComponentLoader::ComponentLoader(Profile* profile)
     : profile_(profile),
-      extension_system_(extension_system),
+      extension_system_(ExtensionSystem::Get(profile_)),
       ignore_allowlist_for_testing_(false) {}
 
 ComponentLoader::~ComponentLoader() = default;
+
+void ComponentLoader::Shutdown() {
+  profile_ = nullptr;
+  extension_system_ = nullptr;
+}
 
 void ComponentLoader::LoadAll() {
   TRACE_EVENT0("browser,startup", "ComponentLoader::LoadAll");
@@ -218,16 +222,13 @@ void ComponentLoader::LoadAll() {
 
 std::optional<base::Value::Dict> ComponentLoader::ParseManifest(
     std::string_view manifest_contents) const {
-  JSONStringValueDeserializer deserializer(manifest_contents);
-  std::unique_ptr<base::Value> manifest =
-      deserializer.Deserialize(nullptr, nullptr);
-
-  if (!manifest.get() || !manifest->is_dict()) {
+  std::optional<base::Value::Dict> manifest =
+      base::JSONReader::ReadDict(manifest_contents);
+  if (!manifest) {
     LOG(ERROR) << "Failed to parse extension manifest.";
     return std::nullopt;
   }
-
-  return std::move(*manifest).TakeDict();
+  return manifest;
 }
 
 ExtensionId ComponentLoader::Add(int manifest_resource_id,
@@ -317,8 +318,8 @@ void ComponentLoader::Load(const ComponentExtensionInfo& info) {
   }
 
   CHECK_EQ(info.extension_id, extension->id()) << extension->name();
-  extension_system_->extension_service()->AddComponentExtension(
-      extension.get());
+  auto* registrar = ExtensionRegistrar::Get(profile_);
+  registrar->AddComponentExtension(extension.get());
 }
 
 void ComponentLoader::Remove(const base::FilePath& root_directory) {
@@ -374,8 +375,13 @@ void ComponentLoader::AddHangoutServicesExtension() {
 #endif  // BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
 
 void ComponentLoader::AddNetworkSpeechSynthesisExtension() {
-  Add(IDR_NETWORK_SPEECH_SYNTHESIS_MANIFEST,
-      base::FilePath(FILE_PATH_LITERAL("network_speech_synthesis")));
+  if (::features::IsExtensionManifestV3NetworkSpeechSynthesisEnabled()) {
+    Add(IDR_NETWORK_SPEECH_SYNTHESIS_MANIFEST_MV3,
+        base::FilePath(FILE_PATH_LITERAL("network_speech_synthesis/mv3")));
+  } else {
+    Add(IDR_NETWORK_SPEECH_SYNTHESIS_MANIFEST,
+        base::FilePath(FILE_PATH_LITERAL("network_speech_synthesis")));
+  }
 }
 
 void ComponentLoader::AddWithNameAndDescription(
@@ -420,9 +426,7 @@ void ComponentLoader::AddWebStoreApp() {
 void ComponentLoader::AddChromeApp() {
   AddWithNameAndDescription(
       IDR_CHROME_APP_MANIFEST, base::FilePath(FILE_PATH_LITERAL("chrome_app")),
-      crosapi::browser_util::IsAshWebBrowserEnabled()
-          ? l10n_util::GetStringUTF8(IDS_SHORT_PRODUCT_NAME)
-          : "Ash Chrome",  // Because this is debug only, we do not need i18n.
+      l10n_util::GetStringUTF8(IDS_SHORT_PRODUCT_NAME),
       l10n_util::GetStringUTF8(IDS_CHROME_SHORTCUT_DESCRIPTION));
 }
 
@@ -451,6 +455,13 @@ scoped_refptr<const Extension> ComponentLoader::CreateExtension(
   // TODO(abarth): We should REQUIRE_MODERN_MANIFEST_VERSION once we've updated
   //               our component extensions to the new manifest version.
   int flags = Extension::REQUIRE_KEY;
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // ChromeOS component extension (GoogleTTS) needs to use symlinks to share
+  // data during MV2 to MV3 migration.
+  flags |= Extension::FOLLOW_SYMLINKS_ANYWHERE;
+#endif
+
   return Extension::Create(info.root_directory,
                            mojom::ManifestLocation::kComponent, info.manifest,
                            flags, utf8_error);
@@ -489,10 +500,7 @@ void ComponentLoader::AddDefaultComponentExtensions(
   if (!skip_session_components) {
     AddWebStoreApp();
 #if BUILDFLAG(IS_CHROMEOS)
-    if (crosapi::browser_util::IsAshWebBrowserEnabled() ||
-        ash::switches::IsAshDebugBrowserEnabled()) {
-      AddChromeApp();
-    }
+    AddChromeApp();
 #endif  // BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(ENABLE_PDF)
     Add(pdf_extension_util::GetManifest(),
@@ -560,14 +568,10 @@ void ComponentLoader::AddDefaultComponentExtensionsWithBackgroundPages(
     Add(IDR_ECHO_MANIFEST,
         base::FilePath(FILE_PATH_LITERAL("/usr/share/chromeos-assets/echo")));
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-    if (!base::FeatureList::IsEnabled(
-            chromeos::features::kDisableOfficeEditingComponentApp)) {
-      AddComponentFromDirWithManifestFilename(
-          base::FilePath("/usr/share/chromeos-assets/quickoffice"),
-          extension_misc::kQuickOfficeComponentExtensionId,
-          extensions::kManifestFilename, extensions::kManifestFilename,
-          base::DoNothing());
-    }
+    AddComponentFromDirWithManifestFilename(
+        base::FilePath("/usr/share/chromeos-assets/quickoffice"),
+        extension_misc::kQuickOfficeComponentExtensionId,
+        extensions::kManifestFilename, extensions::kManifestFilename, {});
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -619,8 +623,8 @@ void ComponentLoader::
 
 void ComponentLoader::UnloadComponent(ComponentExtensionInfo* component) {
   if (extension_system_->is_ready()) {
-    extension_system_->extension_service()->RemoveComponentExtension(
-        component->extension_id);
+    auto* registrar = ExtensionRegistrar::Get(profile_);
+    registrar->RemoveComponentExtension(component->extension_id);
   }
 }
 
@@ -699,7 +703,11 @@ void ComponentLoader::AddWithNameAndDescriptionFromDir(
 void ComponentLoader::AddChromeOsSpeechSynthesisExtensions() {
   if (!Exists(extension_misc::kGoogleSpeechSynthesisExtensionId)) {
     AddComponentFromDir(
-        base::FilePath(extension_misc::kGoogleSpeechSynthesisExtensionPath),
+        ::features::IsAccessibilityManifestV3EnabledForGoogleTts()
+            ? base::FilePath(
+                  extension_misc::kGoogleSpeechSynthesisManifestV3ExtensionPath)
+            : base::FilePath(
+                  extension_misc::kGoogleSpeechSynthesisExtensionPath),
         extension_misc::kGoogleSpeechSynthesisExtensionId,
         base::BindRepeating(
             &ComponentLoader::FinishLoadSpeechSynthesisExtension,
@@ -709,7 +717,10 @@ void ComponentLoader::AddChromeOsSpeechSynthesisExtensions() {
 
   if (!Exists(extension_misc::kEspeakSpeechSynthesisExtensionId)) {
     AddComponentFromDir(
-        base::FilePath(extension_misc::kEspeakSpeechSynthesisExtensionPath),
+        base::FilePath(
+            ::features::IsAccessibilityManifestV3EnabledForEspeakNGTts()
+                ? extension_misc::kEspeakManifestV3SpeechSynthesisExtensionPath
+                : extension_misc::kEspeakSpeechSynthesisExtensionPath),
         extension_misc::kEspeakSpeechSynthesisExtensionId,
         base::BindRepeating(
             &ComponentLoader::FinishLoadSpeechSynthesisExtension,

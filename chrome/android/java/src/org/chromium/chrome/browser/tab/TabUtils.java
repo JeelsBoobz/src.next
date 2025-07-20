@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.tab;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.Configuration;
@@ -20,14 +22,15 @@ import android.widget.ImageView;
 import android.widget.ImageView.ScaleType;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
+import org.chromium.chrome.browser.media.MediaCaptureDevicesDispatcherAndroid;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiThemeProvider;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
@@ -43,11 +46,9 @@ import org.chromium.url.GURL;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
 
 /** Collection of utility methods that operates on Tab. */
+@NullMarked
 public class TabUtils {
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     public static final float PORTRAIT_THUMBNAIL_ASPECT_RATIO = 0.85f;
@@ -130,17 +131,18 @@ public class TabUtils {
      */
     public static void switchUserAgent(Tab tab, boolean switchToDesktop, int caller) {
         final boolean reloadOnChange = !tab.isNativePage();
-        tab.getWebContents()
+        assumeNonNull(tab.getWebContents())
                 .getNavigationController()
                 .setUseDesktopUserAgent(switchToDesktop, reloadOnChange, caller);
     }
 
     /**
      * Get UseDesktopUserAgent setting from webContents.
+     *
      * @param webContents The webContents used to retrieve UseDesktopUserAgent setting.
      * @return Whether the webContents is set to use desktop user agent.
      */
-    public static boolean isUsingDesktopUserAgent(WebContents webContents) {
+    public static boolean isUsingDesktopUserAgent(@Nullable WebContents webContents) {
         return webContents != null
                 && webContents.getNavigationController().getUseDesktopUserAgent();
     }
@@ -200,18 +202,6 @@ public class TabUtils {
      * @param profile The profile of the tab.
      *        Content settings have separate storage for incognito profiles.
      *        For site-specific exceptions the actual profile is needed.
-     * @return Whether the desktop site should be requested.
-     */
-    public static boolean isDesktopSiteGlobalEnabled(Profile profile) {
-        return WebsitePreferenceBridge.isCategoryEnabled(
-                profile, ContentSettingsType.REQUEST_DESKTOP_SITE);
-    }
-
-    /**
-     * Check if Request Desktop Site global setting is enabled.
-     * @param profile The profile of the tab.
-     *        Content settings have separate storage for incognito profiles.
-     *        For site-specific exceptions the actual profile is needed.
      * @param url The URL for the current web content.
      * @return Whether the desktop site should be requested.
      */
@@ -261,7 +251,7 @@ public class TabUtils {
 
     private static float getWindowHeightExcludingSystemBarsDp(
             DimensionCompat compat, Context context) {
-        return (compat.getWindowHeight() - compat.getNavbarHeight() - compat.getStatusbarHeight())
+        return (compat.getWindowHeight() - compat.getNavbarHeight() - compat.getStatusBarHeight())
                 / context.getResources().getDisplayMetrics().density;
     }
 
@@ -284,22 +274,36 @@ public class TabUtils {
             int cardWidthPx,
             Context context,
             BrowserControlsStateProvider browserControlsStateProvider) {
-        int tabThumbnailHeight =
-                (int)
-                        ((cardWidthPx - getThumbnailWidthDiff(context))
-                                / getTabThumbnailAspectRatio(
-                                        context, browserControlsStateProvider));
-        int cardHeightPx = tabThumbnailHeight + getThumbnailHeightDiff(context);
-        return cardHeightPx;
+        float aspectRatio = getTabThumbnailAspectRatio(context, browserControlsStateProvider);
+        int thumbnailHeight = (int) ((cardWidthPx - getThumbnailWidthDiff(context)) / aspectRatio);
+        return thumbnailHeight + getThumbnailHeightDiff(context);
+    }
+
+    /**
+     * Derive grid card width based on height, expected thumbnail aspect ratio and margins.
+     *
+     * @param cardHeightPx width of the card
+     * @param context to derive view margins
+     * @param browserControlsStateProvider - For getting browser controls height.
+     * @return computed card height.
+     */
+    public static int deriveGridCardWidth(
+            int cardHeightPx,
+            Context context,
+            BrowserControlsStateProvider browserControlsStateProvider) {
+        float aspectRatio = getTabThumbnailAspectRatio(context, browserControlsStateProvider);
+        int thumbnailWidth = (int) ((cardHeightPx - getThumbnailHeightDiff(context)) * aspectRatio);
+        return thumbnailWidth + getThumbnailWidthDiff(context);
     }
 
     /**
      * Derive thumbnail size based on parent card size.
+     *
      * @param gridCardSize size of parent card.
      * @param context to derive view margins.
      * @return computed width and height of thumbnail.
      */
-    public static Size deriveThumbnailSize(@NonNull Size gridCardSize, @NonNull Context context) {
+    public static Size deriveThumbnailSize(Size gridCardSize, Context context) {
         int thumbnailWidth = gridCardSize.getWidth() - getThumbnailWidthDiff(context);
         int thumbnailHeight = gridCardSize.getHeight() - getThumbnailHeightDiff(context);
         return new Size(thumbnailWidth, thumbnailHeight);
@@ -355,6 +359,26 @@ public class TabUtils {
         view.setImageMatrix(m);
     }
 
+    /** Returns whether media is being captured for a tab. */
+    public static boolean isCapturingForMedia(Tab tab) {
+        WebContents webContents = tab.getWebContents();
+        if (webContents == null) return false;
+        return MediaCaptureDevicesDispatcherAndroid.isCapturingAudio(webContents)
+                || MediaCaptureDevicesDispatcherAndroid.isCapturingVideo(webContents)
+                || MediaCaptureDevicesDispatcherAndroid.isCapturingTab(webContents)
+                || MediaCaptureDevicesDispatcherAndroid.isCapturingWindow(webContents)
+                || MediaCaptureDevicesDispatcherAndroid.isCapturingScreen(webContents);
+    }
+
+    /** Pauses media for a tab. */
+    public static void pauseMedia(Tab tab) {
+        WebContents webContents = tab.getWebContents();
+        if (webContents != null) {
+            webContents.suspendAllMediaPlayers();
+            webContents.setAudioMuted(true);
+        }
+    }
+
     private static int getThumbnailHeightDiff(Context context) {
         final int tabGridCardMargin = (int) TabUiThemeProvider.getTabGridCardMargin(context);
         final int thumbnailMargin =
@@ -370,14 +394,5 @@ public class TabUtils {
         final int thumbnailMargin =
                 (int) context.getResources().getDimension(R.dimen.tab_grid_card_thumbnail_margin);
         return 2 * (tabGridCardMargin + thumbnailMargin);
-    }
-
-    /** Returns the list of Tab IDs for the given Tabs. */
-    public static List<Integer> getTabIds(Collection<Tab> tabs) {
-        List<Integer> ret = new ArrayList<>(tabs.size());
-        for (Tab tab : tabs) {
-            ret.add(tab.getId());
-        }
-        return ret;
     }
 }

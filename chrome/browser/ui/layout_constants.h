@@ -95,8 +95,15 @@ enum LayoutConstant {
   // The size of the trailing icons used inside the LocationBar.
   LOCATION_BAR_TRAILING_ICON_SIZE,
 
+  // Additional space beyond TAB_STRIP_PADDING between the tab strip and the
+  // new tab button.
+  NEW_TAB_BUTTON_LEADING_MARGIN,
+
   // The size of icons used in PageInfo bubbles.
   PAGE_INFO_ICON_SIZE,
+
+  // The size of icons in star rating view.
+  STAR_RATING_ICON_SIZE,
 
   // Padding after the tab title.
   TAB_AFTER_TITLE_PADDING,
@@ -205,6 +212,9 @@ enum LayoutInset {
 
   // The padding around the browser app menu chip.
   BROWSER_APP_MENU_CHIP_PADDING,
+
+  // The padding around the app menu chip in a web app browser window.
+  WEB_APP_APP_MENU_CHIP_PADDING,
 
   // The padding around the profile menu chip.
   AVATAR_CHIP_PADDING,

@@ -9,7 +9,7 @@
 #include "build/build_config.h"
 #include "content/browser/browser_child_process_host_impl.h"
 #include "content/browser/child_process_host_impl.h"
-#include "content/browser/utility_process_host.h"
+#include "content/browser/service_host/utility_process_host.h"
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/browser_child_process_host_delegate.h"
 #include "content/public/browser/child_process_data.h"
@@ -196,14 +196,11 @@ class TestProcessHost : public BrowserChildProcessHostDelegate {
   }
 
   TestProcessHost()
-      : process_(BrowserChildProcessHost::Create(
-            PROCESS_TYPE_UTILITY,
-            this,
-            ChildProcessHost::IpcMode::kNormal)) {}
+      : process_(BrowserChildProcessHost::Create(PROCESS_TYPE_UTILITY, this)) {}
   ~TestProcessHost() override = default;
 
   // Returns the ID of the child process.
-  int GetId() { return process_->GetData().id; }
+  int GetID() { return process_->GetData().id; }
 
   // Binds to the test service on the child process and returns the bound
   // remote.
@@ -321,7 +318,7 @@ class BrowserChildProcessObserverBrowserTest : public ContentBrowserTest {};
 IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest,
                        MAYBE_LaunchAndForceShutdown) {
   base::WeakPtr<TestProcessHost> host = TestProcessHost::Create();
-  int child_id = host->GetId();
+  int child_id = host->GetID();
 
   TestBrowserChildProcessObserver observer(child_id);
 
@@ -361,7 +358,7 @@ IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest,
 IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest,
                        LaunchAndDelete) {
   base::WeakPtr<TestProcessHost> host = TestProcessHost::Create();
-  int child_id = host->GetId();
+  int child_id = host->GetID();
 
   TestBrowserChildProcessObserver observer(child_id);
 
@@ -400,7 +397,7 @@ IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest,
 IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest,
                        MAYBE_LaunchAndDisconnect) {
   base::WeakPtr<TestProcessHost> host = TestProcessHost::Create();
-  int child_id = host->GetId();
+  int child_id = host->GetID();
 
   TestBrowserChildProcessObserver observer(child_id);
 
@@ -446,7 +443,7 @@ IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest,
 IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest,
                        MAYBE_LaunchAndCrash) {
   base::WeakPtr<TestProcessHost> host = TestProcessHost::Create();
-  int child_id = host->GetId();
+  int child_id = host->GetID();
 
   TestBrowserChildProcessObserver observer(child_id);
 
@@ -492,7 +489,7 @@ IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest,
 #if !BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_MAC)
 IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest, LaunchFailed) {
   base::WeakPtr<TestProcessHost> host = TestProcessHost::Create();
-  int child_id = host->GetId();
+  int child_id = host->GetID();
 
 #if BUILDFLAG(IS_WIN)
   // The Windows sandbox does not like the child process being a different
@@ -557,7 +554,7 @@ class TestPreSpawnTargetFailureBrowserChildProcessNotificationObserver
 IN_PROC_BROWSER_TEST_F(BrowserChildProcessObserverBrowserTest,
                        LaunchPreSpawnFailed) {
   base::WeakPtr<TestProcessHost> host = TestProcessHost::Create();
-  int child_id = host->GetId();
+  int child_id = host->GetID();
 
   TestBrowserChildProcessObserver observer(child_id);
 

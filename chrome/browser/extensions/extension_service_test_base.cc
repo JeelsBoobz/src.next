@@ -3,27 +3,28 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/extension_service_test_base.h"
-#include "base/memory/raw_ptr.h"
 
 #include <utility>
 
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_garbage_collector_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/external_provider_manager.h"
 #include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/extensions/shared_module_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
@@ -49,9 +50,11 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_task_environment.h"
+#include "extensions/browser/delayed_install_manager.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/extensions_client.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -247,7 +250,7 @@ ExtensionServiceTestBase::ExtensionServiceTestBase(
       service_(nullptr),
       testing_local_state_(TestingBrowserProcess::GetGlobal()),
       registry_(nullptr),
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       user_manager_(std::make_unique<user_manager::UserManagerImpl>(
           std::make_unique<ash::UserManagerDelegateImpl>(),
           testing_local_state_.Get(),
@@ -265,6 +268,9 @@ ExtensionServiceTestBase::ExtensionServiceTestBase(
       std::vector<
           raw_ptr<policy::ConfigurationPolicyProvider, VectorExperimental>>{
           &policy_provider_});
+  // Allow unpacked extensions without developer mode for testing.
+  feature_list_.InitAndDisableFeature(
+      extensions_features::kExtensionDisableUnsupportedDeveloper);
 }
 
 ExtensionServiceTestBase::~ExtensionServiceTestBase() {
@@ -292,6 +298,7 @@ void ExtensionServiceTestBase::InitializeExtensionService(
   CreateExtensionService(is_first_run, autoupdate_enabled, extensions_enabled,
                          enable_install_limiter);
   registry_ = ExtensionRegistry::Get(profile());
+  registrar_ = ExtensionRegistrar::Get(profile());
 }
 
 bool ExtensionServiceTestBase::ShouldAllowMV2Extensions() {
@@ -315,7 +322,9 @@ void ExtensionServiceTestBase::InitializeExtensionServiceWithUpdater() {
   ExtensionServiceInitParams params;
   params.autoupdate_enabled = true;
   InitializeExtensionService(std::move(params));
-  service_->updater()->Start();
+  auto* updater = ExtensionUpdater::Get(profile());
+  CHECK(updater->enabled());
+  updater->Start();
 }
 
 void ExtensionServiceTestBase::
@@ -341,7 +350,7 @@ testing::AssertionResult ExtensionServiceTestBase::ValidateBooleanPref(
     bool expected_val) {
   std::string msg =
       base::StringPrintf("while checking: %s %s == %s", extension_id.c_str(),
-                         pref_path.c_str(), expected_val ? "true" : "false");
+                         pref_path.c_str(), base::ToString(expected_val));
 
   PrefService* prefs = profile()->GetPrefs();
   const base::Value::Dict& dict = prefs->GetDict(pref_names::kExtensions);
@@ -423,6 +432,7 @@ void ExtensionServiceTestBase::SetUp() {
 }
 
 void ExtensionServiceTestBase::TearDown() {
+  Shutdown();
   if (profile_) {
     content::StoragePartitionConfig default_storage_partition_config =
         content::StoragePartitionConfig::CreateDefault(profile());
@@ -436,6 +446,11 @@ void ExtensionServiceTestBase::TearDown() {
 #if BUILDFLAG(IS_CHROMEOS)
   kiosk_chrome_app_manager_.reset();
 #endif
+}
+
+void ExtensionServiceTestBase::Shutdown() {
+  registry_ = nullptr;
+  registrar_ = nullptr;
 }
 
 void ExtensionServiceTestBase::SetUpTestSuite() {
@@ -477,17 +492,18 @@ void ExtensionServiceTestBase::CreateExtensionService(
       base::CommandLine::ForCurrentProcess(), extensions_install_dir_,
       unpacked_install_dir_, autoupdate_enabled, extensions_enabled);
 
-  service_->component_loader()->set_ignore_allowlist_for_testing(true);
+  ComponentLoader::Get(profile())->set_ignore_allowlist_for_testing(true);
 
   // When we start up, we want to make sure there is no external provider,
   // since the ExtensionService on Windows will use the Registry as a default
   // provider and if there is something already registered there then it will
   // interfere with the tests. Those tests that need an external provider
   // will register one specifically.
-  service_->ClearProvidersForTesting();
+  ExternalProviderManager::Get(profile())->ClearProvidersForTesting();
 
-  service_->RegisterInstallGate(ExtensionPrefs::DelayReason::kWaitForImports,
-                                service_->shared_module_service());
+  DelayedInstallManager::Get(profile())->RegisterInstallGate(
+      ExtensionPrefs::DelayReason::kWaitForImports,
+      SharedModuleService::Get(profile()));
 
 #if BUILDFLAG(IS_CHROMEOS)
   if (!enable_install_limiter) {

@@ -14,7 +14,6 @@
 #include "net/base/request_priority.h"
 #include "net/http/alternative_service.h"
 #include "net/http/http_response_info.h"
-#include "net/http/http_stream_pool_switching_info.h"
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_with_source.h"
 #include "net/proxy_resolution/proxy_info.h"
@@ -25,7 +24,6 @@
 #include "net/ssl/ssl_config.h"
 #include "net/ssl/ssl_info.h"
 #include "net/websockets/websocket_handshake_stream_base.h"
-#include "url/gurl.h"
 
 namespace net {
 
@@ -111,14 +109,6 @@ class NET_EXPORT_PRIVATE HttpStreamRequest {
     // Called when finding all QUIC alternative services are marked broken for
     // the origin in this request which advertises supporting QUIC.
     virtual void OnQuicBroken() = 0;
-
-    // Called when the call site should use HttpStreamPool to request an
-    // HttpStream.
-    // TODO(crbug.com/346835898): Remove this method once we figure out a
-    // better way to resolve proxies. This method is needed because currently
-    // HttpStreamFactory::JobController resolves proxies.
-    virtual void OnSwitchesToHttpStreamPool(
-        HttpStreamPoolSwitchingInfo request_info) = 0;
   };
 
   class NET_EXPORT_PRIVATE Helper {
@@ -205,6 +195,21 @@ class NET_EXPORT_PRIVATE HttpStreamRequest {
     return dns_resolution_end_time_override_;
   }
 
+  // Sets a new helper for this request so that the new helper can take over
+  // the responsibility of processing this request.
+  //
+  // This *MUST NOT* be used other than switching from HttpStreamFactory to
+  // HttpStreamPool. (Re)setting the helper is extremetely dangerous and can
+  // cause dangling pointers and/or UAFs very easily. This method only exists to
+  // work around the fact that the HttpStreamFactory::JobController performs
+  // proxy resolution for a request. Ideally we should separate proxy resolution
+  // from HttpStreamFactory::JobController and use HttpStreamPool directly from
+  // HttpNetworkTransaction, instead of setting the helper.
+  //
+  // TODO(crbug.com/346835898): Remove this method once we come up with a way
+  // to separate proxy resolution from the HttpStreamFactory::JobController.
+  void SetHelperForSwitchingToPool(Helper* helper);
+
  private:
   // Unowned. The helper must not be destroyed before this object is.
   raw_ptr<Helper> helper_;
@@ -215,7 +220,7 @@ class NET_EXPORT_PRIVATE HttpStreamRequest {
 
   bool completed_ = false;
   // Protocol negotiated with the server.
-  NextProto negotiated_protocol_ = kProtoUnknown;
+  NextProto negotiated_protocol_ = NextProto::kProtoUnknown;
   // The reason why Chrome uses a specific transport protocol for HTTP
   // semantics.
   AlternateProtocolUsage alternate_protocol_usage_ =

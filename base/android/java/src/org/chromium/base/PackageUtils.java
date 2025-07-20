@@ -5,13 +5,17 @@
 package org.chromium.base;
 
 import android.annotation.SuppressLint;
+import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
 import android.os.Build;
+import android.provider.Settings;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
+
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -25,9 +29,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** This class provides package checking related methods. */
+@NullMarked
 public class PackageUtils {
     private static final String TAG = "PackageUtils";
     private static final char[] HEX_CHAR_LOOKUP = "0123456789ABCDEF".toCharArray();
+
+    private static final String DEFAULT_ASSISTANT_SETTING = "assistant";
 
     /** Retrieves the PackageInfo for the given package, or null if it is not installed. */
     public static @Nullable PackageInfo getPackageInfo(String packageName, int flags) {
@@ -77,6 +84,18 @@ public class PackageUtils {
         return ret;
     }
 
+    /**
+     * Return the "long" version code of the given PackageInfo. Does the right thing for
+     * before/after Android P when this got wider.
+     */
+    public static long packageVersionCode(PackageInfo pi) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return pi.getLongVersionCode();
+        } else {
+            return pi.versionCode;
+        }
+    }
+
     // Need to call an internal method to work around a framework bug.
     @SuppressWarnings("PrivateApi")
     public static void maybeWorkAroundWebViewPackageVisibility() {
@@ -109,7 +128,8 @@ public class PackageUtils {
      */
     @SuppressLint("PackageManagerGetSignatures")
     // https://stackoverflow.com/questions/39192844/android-studio-warning-when-using-packagemanager-get-signatures
-    public static List<String> getCertificateSHA256FingerprintForPackage(String packageName) {
+    public static @Nullable List<String> getCertificateSHA256FingerprintForPackage(
+            String packageName) {
         PackageInfo packageInfo = getPackageInfo(packageName, PackageManager.GET_SIGNATURES);
 
         if (packageInfo == null) return null;
@@ -139,7 +159,29 @@ public class PackageUtils {
     }
 
     /**
+     * Gets the package name of the default assistant app (e.g. com.example.app).
+     *
+     * @param context Context used to get settings.
+     * @return Package name of assistant app, or null if unable to get.
+     */
+    public static @Nullable String getDefaultAssistantPackageName(Context context) {
+        @Nullable String defaultAssistantSetting =
+                Settings.Secure.getString(context.getContentResolver(), DEFAULT_ASSISTANT_SETTING);
+        if (defaultAssistantSetting == null || defaultAssistantSetting.isBlank()) {
+            return null;
+        }
+
+        var splitSetting = defaultAssistantSetting.split("/");
+        if (splitSetting.length > 1 && !splitSetting[0].isBlank()) {
+            return splitSetting[0];
+        }
+
+        return null;
+    }
+
+    /**
      * Converts a byte array to hex string with : inserted between each element.
+     *
      * @param byteArray The array to be converted.
      * @return A string with two letters representing each byte and : in between.
      */

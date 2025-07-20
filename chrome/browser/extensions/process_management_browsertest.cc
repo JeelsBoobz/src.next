@@ -271,9 +271,13 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest, ProcessOverflow) {
   extensions::ProcessManager* process_manager =
       extensions::ProcessManager::Get(browser()->profile());
   content::RenderProcessHost* extension1_host =
-      process_manager->GetSiteInstanceForURL(extension1_url)->GetProcess();
+      (*process_manager->GetRenderFrameHostsForExtension(extension1->id())
+            .begin())
+          ->GetProcess();
   content::RenderProcessHost* extension2_host =
-      process_manager->GetSiteInstanceForURL(extension2_url)->GetProcess();
+      (*process_manager->GetRenderFrameHostsForExtension(extension2->id())
+            .begin())
+          ->GetProcess();
 
   // WebUI only shares with other same-site WebUI.
   EXPECT_EQ(ntp1_host, ntp2_host);
@@ -336,7 +340,7 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest, ExtensionAndWebProcessOverflow) {
                  << "When testing extension: " << host->extension_id());
     // The process should be locked.
     EXPECT_TRUE(host->render_process_host()->IsProcessLockedToSiteForTesting());
-    process_ids.insert(host->render_process_host()->GetID());
+    process_ids.insert(host->render_process_host()->GetDeprecatedID());
   }
   // Each extension is in a locked process, unavailable for sharing.
   EXPECT_EQ(3u, process_ids.size());
@@ -363,11 +367,11 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest, ExtensionAndWebProcessOverflow) {
 
   // Verify the number of processes across extensions and tabs.
   process_ids.insert(
-      web_contents1->GetPrimaryMainFrame()->GetProcess()->GetID());
+      web_contents1->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID());
   process_ids.insert(
-      web_contents2->GetPrimaryMainFrame()->GetProcess()->GetID());
+      web_contents2->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID());
   process_ids.insert(
-      web_contents3->GetPrimaryMainFrame()->GetProcess()->GetID());
+      web_contents3->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID());
 
   // The web processes still share 2 processes as if there were a single
   // extension process (making a total of 5 processes counting the existing 3
@@ -390,7 +394,7 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest, ExtensionAndWebProcessOverflow) {
   WebContents* web_contents4 =
       browser()->tab_strip_model()->GetActiveWebContents();
   process_ids.insert(
-      web_contents4->GetPrimaryMainFrame()->GetProcess()->GetID());
+      web_contents4->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID());
   // The cross-site process adds 1 more process to the total, to avoid sharing
   // with the existing web renderer processes (due to Site Isolation).
   EXPECT_EQ(6u, process_ids.size());
@@ -548,7 +552,7 @@ IN_PROC_BROWSER_TEST_P(ChromeWebStoreProcessTest,
       web_contents->GetPrimaryMainFrame()->GetProcess();
   if (GetParam() == kWebstoreURL) {
     EXPECT_TRUE(extensions::ProcessMap::Get(profile())->Contains(
-        extensions::kWebStoreAppId, new_process_host->GetID()));
+        extensions::kWebStoreAppId, new_process_host->GetDeprecatedID()));
   }
 
   // Verify that Webstore is isolated in a separate renderer process.
@@ -594,7 +598,7 @@ IN_PROC_BROWSER_TEST_P(ChromeWebStoreInIsolatedOriginTest,
     content::RenderProcessHost* render_process_host =
         web_contents->GetPrimaryMainFrame()->GetProcess();
     EXPECT_TRUE(extensions::ProcessMap::Get(profile())->Contains(
-        extensions::kWebStoreAppId, render_process_host->GetID()));
+        extensions::kWebStoreAppId, render_process_host->GetDeprecatedID()));
   }
 }
 
@@ -617,7 +621,7 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest,
 
   WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  GURL blocked_url(extension->GetResourceURL("/blocked.html"));
+  GURL blocked_url(extension->GetResourceURL("blocked.html"));
 
   // Navigating to the blocked extension URL should be done through a redirect,
   // otherwise it will result in an OpenURL IPC from the renderer process, which
@@ -628,7 +632,7 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest,
   // Navigate the current tab to the test page in the extension, which will
   // create the extension process and register the webRequest blocking listener.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), extension->GetResourceURL("/test.html")));
+      browser(), extension->GetResourceURL("test.html")));
 
   // Open a new tab to about:blank, which will result in a new SiteInstance
   // without an explicit site URL set.
@@ -662,7 +666,7 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest,
   // the process of the |blocked_url|.
   scoped_refptr<content::SiteInstance> new_site_instance =
       content::SiteInstance::CreateForURL(web_contents->GetBrowserContext(),
-                                          extension->GetResourceURL(""));
+                                          extension->url());
   EXPECT_TRUE(new_site_instance->HasProcess());
   EXPECT_EQ(new_site_instance->GetProcess(),
             web_contents->GetSiteInstance()->GetProcess());

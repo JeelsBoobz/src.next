@@ -80,16 +80,21 @@ class DownloadController : public DownloadControllerBase {
 
   // DownloadControllerBase implementation.
   void OnDownloadStarted(download::DownloadItem* download_item) override;
-  void StartContextMenuDownload(const content::ContextMenuParams& params,
+  void StartContextMenuDownload(const GURL& url,
+                                const content::ContextMenuParams& params,
                                 content::WebContents* web_contents,
-                                bool is_link) override;
+                                bool is_media) override;
 
   // DownloadItem::Observer interface.
   void OnDownloadUpdated(download::DownloadItem* item) override;
   void OnDownloadDestroyed(download::DownloadItem* item) override;
 
   // The download item contains dangerous file types.
+  // Shows the DangerousDownloadDialog (generic dangerous filetype warning).
   void OnDangerousDownload(download::DownloadItem* item);
+
+  // Shows the UI warnings from Safe Browsing malicious APK download check.
+  void ShowDangerousDownloadWarning(download::DownloadItem* item);
 
   // Helper methods to start android download on UI thread.
   void StartAndroidDownload(const content::WebContents::Getter& wc_getter,

@@ -6,7 +6,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PARKABLE_IMAGE_H_
 
 #include "base/containers/span.h"
-#include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
@@ -75,9 +74,6 @@ class PLATFORM_EXPORT ParkableImageImpl final
   void LockData() EXCLUSIVE_LOCKS_REQUIRED(lock_);
   void UnlockData() EXCLUSIVE_LOCKS_REQUIRED(lock_);
   size_t size() const;
-
-  // Returns a ROBufferSegmentReader, wrapping the internal RWBuffer.
-  scoped_refptr<SegmentReader> GetROBufferSegmentReader() LOCKS_EXCLUDED(lock_);
 
   bool is_frozen() const { return !frozen_time_.is_null(); }
 

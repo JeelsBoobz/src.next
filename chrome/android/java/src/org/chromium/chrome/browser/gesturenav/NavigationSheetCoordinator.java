@@ -13,9 +13,12 @@ import android.widget.ListView;
 import android.widget.TextView;
 
 import androidx.annotation.DimenRes;
-import androidx.annotation.NonNull;
+import androidx.annotation.StringRes;
 
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.gesturenav.NavigationSheetMediator.ItemProperties;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -32,10 +35,8 @@ import org.chromium.ui.modelutil.ModelListAdapter;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
-/**
- * Coordinator class for navigation sheet.
- * TODO(jinsukkim): Write tests.
- */
+/** Coordinator class for navigation sheet. TODO(jinsukkim): Write tests. */
+@NullMarked
 class NavigationSheetCoordinator implements BottomSheetContent, NavigationSheet {
     // Type of the navigation list item. We have only single type.
     static final int NAVIGATION_LIST_ITEM_TYPE_ID = 0;
@@ -99,7 +100,7 @@ class NavigationSheetCoordinator implements BottomSheetContent, NavigationSheet 
         }
     }
 
-    private NavigationSheetView mContentView;
+    private @Nullable NavigationSheetView mContentView;
 
     private boolean mForward;
 
@@ -108,7 +109,7 @@ class NavigationSheetCoordinator implements BottomSheetContent, NavigationSheet 
     // Metrics. True if sheet was opened from long-press on back button.
     private boolean mOpenedAsPopup;
 
-    private Profile mProfile;
+    private final Profile mProfile;
 
     /** Construct a new NavigationSheet. */
     NavigationSheetCoordinator(
@@ -189,6 +190,7 @@ class NavigationSheetCoordinator implements BottomSheetContent, NavigationSheet 
     // NavigationSheet
 
     @Override
+    @Initializer
     public void setDelegate(NavigationSheet.Delegate delegate) {
         mDelegate = delegate;
     }
@@ -289,6 +291,7 @@ class NavigationSheetCoordinator implements BottomSheetContent, NavigationSheet 
 
     @Override
     public View getContentView() {
+        assert mContentView != null;
         return mContentView;
     }
 
@@ -299,11 +302,14 @@ class NavigationSheetCoordinator implements BottomSheetContent, NavigationSheet 
 
     @Override
     public int getVerticalScrollOffset() {
+        assert mContentView != null;
         return mContentView.getVerticalScrollOffset();
     }
 
     @Override
-    public void destroy() {}
+    public void destroy() {
+        mMediator.destroy();
+    }
 
     @Override
     public @ContentPriority int getPriority() {
@@ -346,22 +352,22 @@ class NavigationSheetCoordinator implements BottomSheetContent, NavigationSheet 
     }
 
     @Override
-    public @NonNull String getSheetContentDescription(Context context) {
+    public String getSheetContentDescription(Context context) {
         return context.getString(R.string.overscroll_navigation_sheet_description);
     }
 
     @Override
-    public int getSheetHalfHeightAccessibilityStringId() {
+    public @StringRes int getSheetHalfHeightAccessibilityStringId() {
         return R.string.overscroll_navigation_sheet_opened_half;
     }
 
     @Override
-    public int getSheetFullHeightAccessibilityStringId() {
+    public @StringRes int getSheetFullHeightAccessibilityStringId() {
         return R.string.overscroll_navigation_sheet_opened_full;
     }
 
     @Override
-    public int getSheetClosedAccessibilityStringId() {
+    public @StringRes int getSheetClosedAccessibilityStringId() {
         return R.string.overscroll_navigation_sheet_closed;
     }
 }

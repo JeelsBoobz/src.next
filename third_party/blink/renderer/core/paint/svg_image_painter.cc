@@ -45,6 +45,11 @@ void SVGImagePainter::Paint(const PaintInfo& paint_info) {
     return;
   }
 
+  if (paint_info.IsPrivacyPreserving() &&
+      !layout_svg_image_.ImageResource()->IsAccessAllowed()) {
+    return;
+  }
+
   if (SVGModelObjectPainter::CanUseCullRect(layout_svg_image_.StyleRef())) {
     if (!paint_info.GetCullRect().IntersectsTransformed(
             layout_svg_image_.LocalSVGTransform(),
@@ -153,7 +158,9 @@ gfx::SizeF SVGImagePainter::ComputeImageViewportSize() const {
   if (image_resource.ErrorOccurred()) {
     return gfx::SizeF();
   }
-  return image_resource.ConcreteObjectSize(zoom, default_object_size);
+  const NaturalSizingInfo sizing_info =
+      image_resource.GetNaturalDimensions(zoom);
+  return ConcreteObjectSize(sizing_info, default_object_size);
 }
 
 }  // namespace blink

@@ -4,23 +4,25 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 import android.view.ViewGroup;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.chrome.browser.tab_ui.TabSwitcher;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
-import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.tasks.tab_management.TabListCoordinator.TabListMode;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.ButtonType;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.IconPosition;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.ShowMode;
+import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.CreationMode;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.TabListEditorController;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabListEditorOpenMetricGroups;
 import org.chromium.chrome.browser.tinker_tank.TinkerTankDelegate;
@@ -31,28 +33,30 @@ import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateMa
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
  * Manages the {@link TabListEditorCoordinator} and related components for a {@link TabSwitcher}.
  */
+@NullMarked
 public class TabListEditorManager {
-    private final @NonNull Activity mActivity;
-    private final @NonNull ModalDialogManager mModalDialogManager;
-    private final @NonNull ViewGroup mCoordinatorView;
+    private final Activity mActivity;
+    private final ModalDialogManager mModalDialogManager;
+    private final ViewGroup mCoordinatorView;
     private final @Nullable SnackbarManager mSnackbarManager;
     private final @Nullable BottomSheetController mBottomSheetController;
-    private final @NonNull BrowserControlsStateProvider mBrowserControlsStateProvider;
-    private final @NonNull ObservableSupplier<TabGroupModelFilter>
+    private final BrowserControlsStateProvider mBrowserControlsStateProvider;
+    private final ObservableSupplier<@Nullable TabGroupModelFilter>
             mCurrentTabGroupModelFilterSupplier;
-    private final @NonNull TabContentManager mTabContentManager;
-    private final @NonNull TabListCoordinator mTabListCoordinator;
+    private final TabContentManager mTabContentManager;
+    private final TabListCoordinator mTabListCoordinator;
     private final @TabListMode int mMode;
-    private final @NonNull ObservableSupplierImpl<TabListEditorController> mControllerSupplier =
+    private final ObservableSupplierImpl<TabListEditorController> mControllerSupplier =
             new ObservableSupplierImpl<>();
     private final TabGroupCreationDialogManager mTabGroupCreationDialogManager;
     private final @Nullable DesktopWindowStateManager mDesktopWindowStateManager;
-    private final @NonNull ObservableSupplier<EdgeToEdgeController> mEdgeToEdgeSupplier;
+    private final ObservableSupplier<EdgeToEdgeController> mEdgeToEdgeSupplier;
 
     private @Nullable TabListEditorCoordinator mTabListEditorCoordinator;
     private @Nullable List<TabListEditorAction> mTabListEditorActions;
@@ -72,19 +76,19 @@ public class TabListEditorManager {
      * @param edgeToEdgeSupplier Supplier to the {@link EdgeToEdgeController} instance.
      */
     public TabListEditorManager(
-            @NonNull Activity activity,
-            @NonNull ModalDialogManager modalDialogManager,
-            @NonNull ViewGroup coordinatorView,
-            @NonNull ViewGroup rootView,
-            @NonNull BrowserControlsStateProvider browserControlsStateProvider,
-            @NonNull ObservableSupplier<TabGroupModelFilter> currentTabGroupModelFilterSupplier,
-            @NonNull TabContentManager tabContentManager,
-            @NonNull TabListCoordinator tabListCoordinator,
+            Activity activity,
+            ModalDialogManager modalDialogManager,
+            ViewGroup coordinatorView,
+            ViewGroup rootView,
+            BrowserControlsStateProvider browserControlsStateProvider,
+            ObservableSupplier<@Nullable TabGroupModelFilter> currentTabGroupModelFilterSupplier,
+            TabContentManager tabContentManager,
+            TabListCoordinator tabListCoordinator,
             BottomSheetController bottomSheetController,
             @TabListMode int mode,
             @Nullable Runnable onTabGroupCreation,
             @Nullable DesktopWindowStateManager desktopWindowStateManager,
-            @NonNull ObservableSupplier<EdgeToEdgeController> edgeToEdgeSupplier) {
+            ObservableSupplier<EdgeToEdgeController> edgeToEdgeSupplier) {
         mActivity = activity;
         mModalDialogManager = modalDialogManager;
         mCoordinatorView = coordinatorView;
@@ -141,7 +145,10 @@ public class TabListEditorManager {
                             /* gridCardOnClickListenerProvider= */ null,
                             mModalDialogManager,
                             mDesktopWindowStateManager,
-                            mEdgeToEdgeSupplier);
+                            mEdgeToEdgeSupplier,
+                            CreationMode.FULL_SCREEN,
+                            /* undoBarExplicitTrigger= */ null,
+                            /* componentName= */ null);
             mControllerSupplier.set(mTabListEditorCoordinator.getController());
         }
     }
@@ -162,15 +169,24 @@ public class TabListEditorManager {
                             mActivity,
                             ShowMode.MENU_ONLY,
                             ButtonType.ICON_AND_TEXT,
-                            IconPosition.START,
-                            /* actionConfirmationManager= */ null));
-            mTabListEditorActions.add(
-                    TabListEditorGroupAction.createAction(
-                            mActivity,
-                            mTabGroupCreationDialogManager,
-                            ShowMode.MENU_ONLY,
-                            ButtonType.ICON_AND_TEXT,
                             IconPosition.START));
+            if (ChromeFeatureList.sTabGroupParityBottomSheetAndroid.isEnabled()) {
+                mTabListEditorActions.add(
+                        TabListEditorAddToGroupAction.createAction(
+                                mActivity,
+                                mTabGroupCreationDialogManager,
+                                ShowMode.MENU_ONLY,
+                                ButtonType.ICON_AND_TEXT,
+                                IconPosition.START));
+            } else {
+                mTabListEditorActions.add(
+                        TabListEditorLegacyGroupAction.createAction(
+                                mActivity,
+                                mTabGroupCreationDialogManager,
+                                ShowMode.MENU_ONLY,
+                                ButtonType.ICON_AND_TEXT,
+                                IconPosition.START));
+            }
             mTabListEditorActions.add(
                     TabListEditorBookmarkAction.createAction(
                             mActivity,
@@ -194,8 +210,12 @@ public class TabListEditorManager {
         }
 
         var controller = mControllerSupplier.get();
+        assumeNonNull(controller);
+        TabGroupModelFilter filter = mCurrentTabGroupModelFilterSupplier.get();
+        assumeNonNull(filter);
         controller.show(
-                TabModelUtils.convertTabListToListOfTabs(mCurrentTabGroupModelFilterSupplier.get()),
+                filter.getRepresentativeTabList(),
+                /* tabGroupSyncIds= */ Collections.emptyList(),
                 mTabListCoordinator.getRecyclerViewPosition());
         controller.configureToolbarWithMenuItems(mTabListEditorActions);
 

@@ -2,24 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/frame/pausable_script_executor.h"
 
 #include <memory>
 #include <utility>
+#include <vector>
 
-#include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_script_execution_callback.h"
 #include "third_party/blink/renderer/bindings/core/v8/sanitize_script_errors.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_evaluation_result.h"
@@ -118,7 +113,7 @@ PromiseAggregator::PromiseAggregator(ScriptState* script_state,
     // wait for the promise (or then-able) to settle, or will immediately finish
     // with the value. Thus, it's safe to just do this for every value.
     ToResolvedPromise<IDLAny>(script_state, values[i])
-        .React(
+        .Then(
             script_state,
             MakeGarbageCollected<OnSettled>(this, i, /*was_fulfilled=*/true),
             MakeGarbageCollected<OnSettled>(this, i, /*was_fulfilled=*/false));
@@ -190,8 +185,10 @@ V8FunctionExecutor::V8FunctionExecutor(v8::Isolate* isolate,
                                        v8::Local<v8::Value> argv[])
     : function_(isolate, function), receiver_(isolate, receiver) {
   args_.reserve(base::checked_cast<wtf_size_t>(argc));
-  for (int i = 0; i < argc; ++i)
-    args_.push_back(TraceWrapperV8Reference<v8::Value>(isolate, argv[i]));
+  for (int i = 0; i < argc; ++i) {
+    args_.push_back(
+        TraceWrapperV8Reference<v8::Value>(isolate, UNSAFE_TODO(argv[i])));
+  }
 }
 
 v8::LocalVector<v8::Value> V8FunctionExecutor::Execute(
@@ -234,7 +231,7 @@ void PausableScriptExecutor::CreateAndRun(
     v8::Local<v8::Value> argv[],
     mojom::blink::WantResultOption want_result_option,
     WebScriptExecutionCallback callback) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   ScriptState* script_state = ScriptState::From(isolate, context);
   if (!script_state->ContextIsValid()) {
     if (callback)
@@ -247,8 +244,8 @@ void PausableScriptExecutor::CreateAndRun(
           mojom::blink::LoadEventBlockingOption::kDoNotBlock,
           want_result_option, mojom::blink::PromiseResultOption::kDoNotWait,
           std::move(callback),
-          MakeGarbageCollected<V8FunctionExecutor>(
-              script_state->GetIsolate(), function, receiver, argc, argv));
+          MakeGarbageCollected<V8FunctionExecutor>(isolate, function, receiver,
+                                                   argc, argv));
   executor->Run();
 }
 

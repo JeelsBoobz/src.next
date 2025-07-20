@@ -40,9 +40,10 @@ export interface ErrorPageDelegate {
  * unassociated with the extension, this will be the full url.
  */
 function getRelativeUrl(
-    url: string, error: ManifestError|RuntimeError): string {
-  const fullUrl = 'chrome-extension://' + error.extensionId + '/';
-  return url.startsWith(fullUrl) ? url.substring(fullUrl.length) : url;
+    url: string, error: ManifestError|RuntimeError|null): string {
+  const fullUrl = error ? `chrome-extension://${error.extensionId}/` : '';
+  return (fullUrl && url.startsWith(fullUrl)) ? url.substring(fullUrl.length) :
+                                                url;
 }
 
 /**
@@ -109,14 +110,15 @@ export class ExtensionsErrorPageElement extends ExtensionsErrorPageElementBase {
     };
   }
 
-  data?: chrome.developerPrivate.ExtensionInfo;
-  delegate?: ErrorPageDelegate&ItemDelegate;
-  inDevMode: boolean = false;
-  protected entries_: Array<ManifestError|RuntimeError> = [];
-  protected code_: chrome.developerPrivate.RequestFileSourceResponse|null =
-      null;
-  private selectedEntry_: number = -1;
-  private selectedStackFrame_: chrome.developerPrivate.StackFrame|null = null;
+  accessor data: chrome.developerPrivate.ExtensionInfo|undefined;
+  accessor delegate: ErrorPageDelegate&ItemDelegate|undefined;
+  accessor inDevMode: boolean = false;
+  protected accessor entries_: Array<ManifestError|RuntimeError> = [];
+  protected accessor code_: chrome.developerPrivate.RequestFileSourceResponse|
+      null = null;
+  private accessor selectedEntry_: number = -1;
+  private accessor selectedStackFrame_: chrome.developerPrivate.StackFrame|
+      null = null;
 
   override firstUpdated() {
     this.addEventListener('view-enter-start', this.onViewEnterStart_);
@@ -145,8 +147,9 @@ export class ExtensionsErrorPageElement extends ExtensionsErrorPageElementBase {
     }
   }
 
-  getSelectedError(): ManifestError|RuntimeError {
-    return this.entries_[this.selectedEntry_]!;
+  getSelectedError(): ManifestError|RuntimeError|null {
+    return this.selectedEntry_ === -1 ? null :
+                                        this.entries_[this.selectedEntry_]!;
   }
 
   /**
@@ -204,7 +207,8 @@ export class ExtensionsErrorPageElement extends ExtensionsErrorPageElementBase {
       return;
     }
 
-    const error = this.getSelectedError();
+    // Safe to use ! here because we check for selectedEntry_ < 0 above.
+    const error = this.getSelectedError()!;
     const args: chrome.developerPrivate.RequestFileSourceProperties = {
       extensionId: error.extensionId,
       message: error.message,
@@ -289,6 +293,7 @@ export class ExtensionsErrorPageElement extends ExtensionsErrorPageElementBase {
     this.selectedStackFrame_ = frame;
 
     const selectedError = this.getSelectedError();
+    assert(selectedError);
     assert(this.delegate);
     this.delegate
         .requestFileSource({

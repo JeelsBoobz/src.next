@@ -7,10 +7,12 @@ package org.chromium.chrome.browser.tasks.tab_management;
 import android.content.res.ColorStateList;
 import android.view.View;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** {@link PropertyKey} list for TabListEditor. */
+@NullMarked
 public class TabListEditorProperties {
     public static final PropertyModel.WritableBooleanPropertyKey IS_VISIBLE =
             new PropertyModel.WritableBooleanPropertyKey();
@@ -30,10 +32,6 @@ public class TabListEditorProperties {
     public static final PropertyModel.WritableObjectPropertyKey<ColorStateList>
             TOOLBAR_BUTTON_TINT = new PropertyModel.WritableObjectPropertyKey<>();
 
-    public static final PropertyModel.WritableObjectPropertyKey<
-                    TabListEditorToolbar.RelatedTabCountProvider>
-            RELATED_TAB_COUNT_PROVIDER = new PropertyModel.WritableObjectPropertyKey<>();
-
     public static final PropertyModel.WritableObjectPropertyKey<String> TOOLBAR_TITLE =
             new PropertyModel.WritableObjectPropertyKey<>();
 
@@ -48,7 +46,6 @@ public class TabListEditorProperties {
                 TOOLBAR_BACKGROUND_COLOR,
                 TOOLBAR_TEXT_TINT,
                 TOOLBAR_BUTTON_TINT,
-                RELATED_TAB_COUNT_PROVIDER,
                 TOOLBAR_TITLE,
                 TOP_MARGIN
             };

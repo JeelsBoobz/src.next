@@ -16,9 +16,11 @@
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
+#include "chrome/browser/extensions/external_provider_manager.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
+#include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -30,10 +32,12 @@
 #include "components/sync/base/pref_names.h"
 #include "components/sync/model/sync_change_processor.h"
 #include "components/sync/test/fake_sync_change_processor.h"
+#include "components/sync/test/test_sync_service.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/pending_extension_manager.h"
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -58,7 +62,11 @@ class ExternalProviderImplChromeOSTest : public ExtensionServiceTestBase {
   ExternalProviderImplChromeOSTest& operator=(
       const ExternalProviderImplChromeOSTest&) = delete;
 
-  ~ExternalProviderImplChromeOSTest() override {}
+  ~ExternalProviderImplChromeOSTest() override = default;
+
+  ExternalProviderManager* external_provider_manager() {
+    return ExternalProviderManager::Get(profile());
+  }
 
   void InitServiceWithExternalProviders(bool standalone) {
     InitServiceWithExternalProvidersAndUserType(standalone,
@@ -92,11 +100,11 @@ class ExternalProviderImplChromeOSTest : public ExtensionServiceTestBase {
         switches::kDisableDefaultApps);
 
     ProviderCollection providers;
-    ExternalProviderImpl::CreateExternalProviders(service_, profile_.get(),
-                                                  &providers);
+    ExternalProviderImpl::CreateExternalProviders(external_provider_manager(),
+                                                  profile_.get(), &providers);
 
     for (std::unique_ptr<ExternalProviderInterface>& provider : providers) {
-      service_->AddProviderForTesting(std::move(provider));
+      external_provider_manager()->AddProviderForTesting(std::move(provider));
     }
   }
 
@@ -115,10 +123,10 @@ class ExternalProviderImplChromeOSTest : public ExtensionServiceTestBase {
 
   // Waits until all possible standalone extensions are installed.
   void WaitForPendingStandaloneExtensionsInstalled() {
-    service_->CheckForExternalUpdates();
+    external_provider_manager()->CheckForExternalUpdates();
     base::RunLoop().RunUntilIdle();
     PendingExtensionManager* const pending_extension_manager =
-        service_->pending_extension_manager();
+        PendingExtensionManager::Get(profile());
     while (pending_extension_manager->IsIdPending(kStandaloneAppId) ||
            pending_extension_manager->IsIdPending(kStandaloneChildAppId)) {
       base::RunLoop().RunUntilIdle();
@@ -133,8 +141,8 @@ class ExternalProviderImplChromeOSTest : public ExtensionServiceTestBase {
     InitializeEmptyExtensionService();
 
     ProviderCollection providers;
-    ExternalProviderImpl::CreateExternalProviders(service_, profile_.get(),
-                                                  &providers);
+    ExternalProviderImpl::CreateExternalProviders(external_provider_manager(),
+                                                  profile_.get(), &providers);
 
     EXPECT_EQ(providers.size(), expected_count);
   }
@@ -158,7 +166,7 @@ TEST_F(ExternalProviderImplChromeOSTest, Normal) {
 
   TestExtensionRegistryObserver observer(registry(), kExternalAppId);
 
-  service_->CheckForExternalUpdates();
+  external_provider_manager()->CheckForExternalUpdates();
 
   scoped_refptr<const Extension> loaded_extension =
       observer.WaitForExtensionLoaded();
@@ -174,7 +182,7 @@ TEST_F(ExternalProviderImplChromeOSTest, AppMode) {
 
   InitServiceWithExternalProviders(false);
 
-  service_->CheckForExternalUpdates();
+  external_provider_manager()->CheckForExternalUpdates();
   base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(registry()->GetInstalledExtension(kExternalAppId));
@@ -214,7 +222,7 @@ TEST_F(ExternalProviderImplChromeOSTest, SyncDisabled) {
 
   TestExtensionRegistryObserver observer(registry(), kStandaloneAppId);
 
-  service_->CheckForExternalUpdates();
+  external_provider_manager()->CheckForExternalUpdates();
 
   scoped_refptr<const Extension> loaded_extension =
       observer.WaitForExtensionLoaded();
@@ -243,7 +251,7 @@ TEST_F(ExternalProviderImplChromeOSTest, PolicyDisabled) {
   TestExtensionRegistryObserver observer(registry(), kStandaloneAppId);
 
   // App sync will wait for priority sync to complete.
-  service_->CheckForExternalUpdates();
+  external_provider_manager()->CheckForExternalUpdates();
 
   scoped_refptr<const Extension> loaded_extension =
       observer.WaitForExtensionLoaded();
@@ -257,6 +265,17 @@ TEST_F(ExternalProviderImplChromeOSTest, PolicyDisabled) {
 // completed.
 TEST_F(ExternalProviderImplChromeOSTest, PriorityCompleted) {
   InitServiceWithExternalProviders(true);
+  // Since MergeDataAndStartSyncing() is called manually below, avoid using the
+  // real SyncService instance, to avoid conflicting with sync startup
+  // notifications, specifically clearing of existing account data upon startup
+  // when there is no sync metadata, which will hit a CHECK.
+  // TODO(crbug.com/425913203): Remove once usage of TestSyncService is
+  // simplified.
+  SyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+      profile(), base::BindRepeating([](content::BrowserContext* context)
+                                         -> std::unique_ptr<KeyedService> {
+        return std::make_unique<syncer::TestSyncService>();
+      }));
 
   // User is logged in.
   auto identity_test_env_profile_adaptor =
@@ -278,7 +297,7 @@ TEST_F(ExternalProviderImplChromeOSTest, PriorityCompleted) {
           std::make_unique<syncer::FakeSyncChangeProcessor>());
 
   // App sync will wait for priority sync to complete.
-  service_->CheckForExternalUpdates();
+  external_provider_manager()->CheckForExternalUpdates();
 
   scoped_refptr<const Extension> loaded_extension =
       observer.WaitForExtensionLoaded();
@@ -293,7 +312,7 @@ TEST_F(ExternalProviderImplChromeOSTest, PriorityCompleted) {
 // - |secondary_kiosk_app_provider|.
 TEST_F(ExternalProviderImplChromeOSTest, ChromeAppKiosk) {
   const AccountId kiosk_account_id(AccountId::FromUserEmail(kTestUserAccount));
-  fake_user_manager()->AddKioskAppUser(kiosk_account_id);
+  fake_user_manager()->AddKioskChromeAppUser(kiosk_account_id);
   fake_user_manager()->LoginUser(kiosk_account_id);
 
   ValidateExternalProviderCountInAppMode(3u);
@@ -304,7 +323,7 @@ TEST_F(ExternalProviderImplChromeOSTest, ChromeAppKiosk) {
 // - |policy_provider|.
 TEST_F(ExternalProviderImplChromeOSTest, WebAppKiosk) {
   const AccountId kiosk_account_id(AccountId::FromUserEmail(kTestUserAccount));
-  fake_user_manager()->AddWebKioskAppUser(kiosk_account_id);
+  fake_user_manager()->AddKioskWebAppUser(kiosk_account_id);
   fake_user_manager()->LoginUser(kiosk_account_id);
 
   ValidateExternalProviderCountInAppMode(1u);

@@ -35,14 +35,13 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
-
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/performance/performance_timeline_constants.h"
-#include "third_party/blink/public/common/responsiveness_metrics/user_interaction_latency.h"
 #include "third_party/blink/public/common/subresource_load_metrics.h"
 #include "third_party/blink/public/mojom/devtools/devtools_agent.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -107,7 +106,8 @@ class CORE_EXPORT LocalFrameClientImpl final : public LocalFrameClient {
                                        bool is_handled_within_agent,
                                        mojom::blink::SameDocumentNavigationType,
                                        bool is_client_redirect,
-                                       bool is_browser_initiated) override;
+                                       bool is_browser_initiated,
+                                       bool should_skip_screenshot) override;
   void DidFailAsyncSameDocumentCommit() override;
   void DispatchDidOpenDocumentInputStream(const KURL& url) override;
   void DispatchDidReceiveTitle(const String&) override;
@@ -115,7 +115,7 @@ class CORE_EXPORT LocalFrameClientImpl final : public LocalFrameClient {
       HistoryItem*,
       WebHistoryCommitType,
       bool should_reset_browser_interface_broker,
-      const blink::ParsedPermissionsPolicy& permissions_policy_header,
+      const network::ParsedPermissionsPolicy& permissions_policy_header,
       const blink::DocumentPolicyFeatureState& document_policy_header) override;
   void DispatchDidFailLoad(const ResourceError&, WebHistoryCommitType) override;
   void DispatchDidDispatchDOMContentLoadedEvent() override;
@@ -140,10 +140,11 @@ class CORE_EXPORT LocalFrameClientImpl final : public LocalFrameClient {
       network::mojom::CSPDisposition should_bypass_main_world_csp,
       mojo::PendingRemote<mojom::blink::BlobURLToken>,
       base::TimeTicks input_start_time,
+      base::TimeTicks actual_navigation_start,
       const String& href_translate,
       const std::optional<Impression>& impression,
       const LocalFrameToken* initiator_frame_token,
-      std::unique_ptr<SourceLocation> source_location,
+      SourceLocation* source_location,
       mojo::PendingRemote<mojom::blink::NavigationStateKeepAliveHandle>
           initiator_navigation_state_keep_alive_handle,
       bool is_container_initiated,
@@ -153,6 +154,7 @@ class CORE_EXPORT LocalFrameClientImpl final : public LocalFrameClient {
   void DidStopLoading() override;
   bool NavigateBackForward(
       int offset,
+      base::TimeTicks actual_navigation_start,
       std::optional<scheduler::TaskAttributionId>
           soft_navigation_heuristics_task_id) const override;
   void DidDispatchPingLoader(const KURL&) override;
@@ -161,7 +163,6 @@ class CORE_EXPORT LocalFrameClientImpl final : public LocalFrameClient {
                                  base::TimeTicks max_event_queued_main_thread,
                                  base::TimeTicks max_event_commit_finish,
                                  base::TimeTicks max_event_end,
-                                 UserInteractionType interaction_type,
                                  uint64_t interaction_offset) override;
   void DidChangeCpuTiming(base::TimeDelta) override;
   void DidObserveLoadingBehavior(LoadingBehaviorFlag) override;
@@ -182,7 +183,7 @@ class CORE_EXPORT LocalFrameClientImpl final : public LocalFrameClient {
   std::optional<blink::UserAgentMetadata> UserAgentMetadata() override;
   WTF::String DoNotTrackValue() override;
   void TransitionToCommittedForNewPage() override;
-  LocalFrame* CreateFrame(const WTF::AtomicString& name,
+  LocalFrame* CreateFrame(const AtomicString& name,
                           HTMLFrameOwnerElement*) override;
 
   RemoteFrame* CreateFencedFrame(
@@ -273,9 +274,8 @@ class CORE_EXPORT LocalFrameClientImpl final : public LocalFrameClient {
   v8::Local<v8::Object> GetScriptableObject(HTMLPlugInElement&,
                                             v8::Isolate*) override;
 
-  scoped_refptr<WebWorkerFetchContext> CreateWorkerFetchContext() override;
-  scoped_refptr<WebWorkerFetchContext>
-  CreateWorkerFetchContextForPlzDedicatedWorker(
+  scoped_refptr<WebWorkerFetchContext> CreateWorkletFetchContext() override;
+  scoped_refptr<WebWorkerFetchContext> CreateWorkerFetchContext(
       WebDedicatedWorkerHostFactoryClient*) override;
   std::unique_ptr<WebContentSettingsClient> CreateWorkerContentSettingsClient()
       override;

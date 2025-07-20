@@ -48,8 +48,13 @@ class StyleAdjuster {
   static void AdjustStyleForTextCombine(ComputedStyleBuilder&);
   static void AdjustStyleForSvgElement(
       const SVGElement& element,
+      const SVGElement* styled_element,
       ComputedStyleBuilder& builder,
       const ComputedStyle& layout_parent_style);
+  static void AdjustStyleForDisplay(ComputedStyleBuilder&,
+                                    const ComputedStyle& layout_parent_style,
+                                    const Element*,
+                                    Document*);
 
  private:
   static bool IsEditableElement(Element*, const ComputedStyleBuilder&);

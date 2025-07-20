@@ -1,7 +1,7 @@
 // Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-//
+
 // A benchmark to verify style performance (and also hooks into layout,
 // but not generally layout itself). This isolates style from paint etc.,
 // for more stable benchmarking and profiling. Note that this test
@@ -12,8 +12,10 @@
 #include <string_view>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/json/json_reader.h"
+#include "base/strings/string_view_util.h"
 #include "testing/perf/perf_result_reporter.h"
 #include "testing/perf/perf_test.h"
 #include "third_party/blink/renderer/core/css/container_query_data.h"
@@ -25,7 +27,6 @@
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_body_element.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
@@ -39,10 +40,10 @@
 namespace blink {
 
 // The HTML left by the dumper script will contain any <style> tags that were
-// in the DOM, which will be interpreted by setInnerHTML() and converted to
-// style sheets. However, we already have our own canonical list of sheets
-// (from the JSON) that we want to use. Keeping both will make for duplicated
-// rules, enabling rules and sheets that have since been deleted
+// in the DOM, which will be interpreted by SetInnerHTMLWithoutTrustedTypes()
+// and converted to style sheets. However, we already have our own canonical
+// list of sheets (from the JSON) that we want to use. Keeping both will make
+// for duplicated rules, enabling rules and sheets that have since been deleted
 // (occasionally even things like “display: none !important”) and so on.
 // Thus, as a kludge, we strip all <style> tags from the HTML here before
 // parsing.
@@ -50,8 +51,8 @@ static WTF::String StripStyleTags(const WTF::String& html) {
   StringBuilder stripped_html;
   wtf_size_t pos = 0;
   for (;;) {
-    wtf_size_t style_start =
-        html.FindIgnoringCase("<style", pos);  // Allow <style id=" etc.
+    // Allow <style id=" etc.
+    wtf_size_t style_start = html.DeprecatedFindIgnoringCase("<style", pos);
     if (style_start == kNotFound) {
       // No more <style> tags, so append the rest of the string.
       stripped_html.Append(html.Substring(pos, html.length() - pos));
@@ -65,7 +66,8 @@ static WTF::String StripStyleTags(const WTF::String& html) {
       pos = style_start + 6;
       continue;
     }
-    wtf_size_t style_end = html.FindIgnoringCase("</style>", style_start);
+    wtf_size_t style_end =
+        html.DeprecatedFindIgnoringCase("</style>", style_start);
     if (style_end == kNotFound) {
       LOG(FATAL) << "Mismatched <style> tag";
     }
@@ -98,7 +100,7 @@ static std::unique_ptr<DummyPageHolder> LoadDumpedPage(
 
   Document& document = page->GetDocument();
   StyleEngine& engine = document.GetStyleEngine();
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(
       StripStyleTags(WTF::String(*dict.FindString("html"))),
       ASSERT_NO_EXCEPTION);
 
@@ -262,8 +264,9 @@ static void MeasureAndPrintStyleForDumpedPage(const char* filename,
       MeasureStyleForDumpedPage(filename, parse_only, &reporter);
   if (result.skipped) {
     char msg[256];
-    snprintf(msg, sizeof(msg), "Skipping %s test because %s could not be read",
-             label, filename);
+    UNSAFE_TODO(snprintf(msg, sizeof(msg),
+                         "Skipping %s test because %s could not be read", label,
+                         filename));
     GTEST_SKIP_(msg);
   }
 

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/layout/layout_shift_tracker.h"
 
 #include "third_party/blink/public/common/input/web_mouse_event.h"
@@ -99,9 +94,8 @@ TEST_F(LayoutShiftTrackerTest, IgnoreSVG) {
               stroke="black" stroke-width="3" fill="red" />
     </svg>
   )HTML");
-  GetDocument()
-      .QuerySelector(AtomicString("circle"))
-      ->setAttribute(svg_names::kCxAttr, AtomicString("100"));
+  QuerySelector("circle")->setAttribute(svg_names::kCxAttr,
+                                        AtomicString("100"));
   UpdateAllLifecyclePhasesForTest();
   EXPECT_FLOAT_EQ(0, GetLayoutShiftTracker().Score());
 }
@@ -332,7 +326,8 @@ void LayoutShiftTrackerNavigationTest::RunTest(bool is_browser_initiated) {
       /*is_synchronously_committed=*/false, /*source_element=*/nullptr,
       mojom::blink::TriggeringEventInfo::kNotFromEvent, is_browser_initiated,
       /*has_ua_visual_transition,=*/false,
-      /*soft_navigation_heuristics_task_id=*/std::nullopt);
+      /*soft_navigation_heuristics_task_id=*/std::nullopt,
+      /*should_skip_screenshot=*/false);
 
   Compositor().BeginFrame();
   test::RunPendingTasks();
@@ -867,10 +862,11 @@ TEST_F(LayoutShiftTrackerTest, StableCompositingChanges) {
     // - add/remove a cc::Layer when there is already a PaintLayer
     // - add/remove a cc::Layer and a PaintLayer together
 
-    static const char* states[] = {"", "pl", "pl tr", "pl", "", "tr", ""};
+    static const std::array<const char*, 7> states = {"", "pl", "pl tr", "pl",
+                                                      "", "tr", ""};
     element->setAttribute(html_names::kClassAttr, AtomicString(states[state]));
     UpdateAllLifecyclePhasesForTest();
-    return ++state < sizeof states / sizeof *states;
+    return ++state < states.size();
   };
   while (advance()) {
   }
@@ -984,7 +980,7 @@ TEST_F(LayoutShiftTrackerTest,
   // In the next frame, we scroll it onto the screen, but it still doesn't
   // count for CLS, and its subtree is not yet unskipped, because the
   // intersection observation takes effect on the subsequent frame.
-  GetDocument().domWindow()->scrollTo(0, 100000);
+  GetDocument().domWindow()->scrollToForTesting(0, 100000);
   UpdateAllLifecyclePhasesForTest();
   EXPECT_FLOAT_EQ(0, GetLayoutShiftTracker().Score());
   EXPECT_EQ(PhysicalSize(100, 1), target->Size());
@@ -1070,7 +1066,7 @@ TEST_F(LayoutShiftTrackerTest,
   // In the next frame, we scroll it onto the screen, but it still doesn't
   // count for CLS, and its subtree is not yet unskipped, because the
   // intersection observation takes effect on the subsequent frame.
-  GetDocument().domWindow()->scrollTo(0, 100000 + 100);
+  GetDocument().domWindow()->scrollToForTesting(0, 100000 + 100);
   UpdateAllLifecyclePhasesForTest();
   EXPECT_FLOAT_EQ(0, GetLayoutShiftTracker().Score());
   EXPECT_EQ(PhysicalSize(100, 1), offscreen->Size());
@@ -1100,7 +1096,7 @@ TEST_F(LayoutShiftTrackerTest,
   EXPECT_GT(score, 0);
 
   // Now scroll the element back off-screen.
-  GetDocument().domWindow()->scrollTo(0, 0);
+  GetDocument().domWindow()->scrollToForTesting(0, 0);
   UpdateAllLifecyclePhasesForTest();
   EXPECT_FLOAT_EQ(score, GetLayoutShiftTracker().Score());
   EXPECT_EQ(PhysicalSize(100, 100), offscreen->Size());
@@ -1199,7 +1195,7 @@ TEST_F(LayoutShiftTrackerTest, ScrollThenCauseScrollAnchoring) {
   auto* target_element = GetElementById("target");
 
   // Scroll the window which accumulates a scroll in the layout shift tracker.
-  GetDocument().domWindow()->scrollBy(0, 1000);
+  GetDocument().domWindow()->scrollByForTesting(0, 1000);
   UpdateAllLifecyclePhasesForTest();
 
   EXPECT_FLOAT_EQ(0, GetLayoutShiftTracker().Score());

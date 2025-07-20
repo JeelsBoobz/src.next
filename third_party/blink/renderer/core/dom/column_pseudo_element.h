@@ -10,20 +10,29 @@
 
 namespace blink {
 
-// A ::column pseudo element. When needed, each column in a multicol container
+// A ::column pseudo-element. When needed, each column in a multicol container
 // will create one of these, during layout.
 class ColumnPseudoElement : public PseudoElement {
  public:
-  ColumnPseudoElement(Element* originating_element, PhysicalRect column_rect)
-      : PseudoElement(originating_element, kPseudoIdColumn),
-        column_rect_(column_rect) {}
+  ColumnPseudoElement(Element* originating_element, wtf_size_t index);
 
   bool IsColumnPseudoElement() const final { return true; }
+  wtf_size_t Index() const { return index_; }
 
   // The column rectangle, relatively to the multicol container.
   const PhysicalRect& ColumnRect() const { return column_rect_; }
+  void SetColumnRect(PhysicalRect column_rect) { column_rect_ = column_rect; }
+
+  // Return the first element that starts in the column, in DOM order.
+  Element* FirstChildInDOMOrder() const;
+
+  void AttachLayoutTree(AttachContext&) final;
+  void DetachLayoutTree(bool performing_reattach) final;
 
  private:
+  // Used for linear time tree traversals.
+  wtf_size_t index_;
+
   PhysicalRect column_rect_;
 };
 

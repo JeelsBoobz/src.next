@@ -41,10 +41,10 @@ std::optional<std::pair<unsigned, int>> DetermineCounterTypeAndValue(
   const ComputedStyle& style = layout_object.StyleRef();
   switch (style.StyleType()) {
     case kPseudoIdNone:
-    case kPseudoIdCheck:
+    case kPseudoIdCheckMark:
     case kPseudoIdBefore:
     case kPseudoIdAfter:
-    case kPseudoIdSelectArrow:
+    case kPseudoIdPickerIcon:
     case kPseudoIdMarker:
     case kPseudoIdScrollMarkerGroup:
     case kPseudoIdScrollMarker:
@@ -121,7 +121,10 @@ CountersAttachmentContext CountersAttachmentContext::DeepClone() const {
   for (auto& [counter_name, stack] : *clone.counter_inheritance_table_) {
     stack = MakeGarbageCollected<CounterStack>(*stack);
     for (Member<CounterEntry>& entry : *stack) {
-      entry = MakeGarbageCollected<CounterEntry>(*entry);
+      // Containment boundaries are nullptr.
+      if (entry) {
+        entry = MakeGarbageCollected<CounterEntry>(*entry);
+      }
     }
   }
   return clone;
